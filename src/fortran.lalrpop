@@ -1,0 +1,257 @@
+// Seed grammar to evolve toward full Fortran 90. 
+// For now we cover: program unit + optional implicit none + simple
+grammar;
+
+use crate::ast::{Program, Stmt, Expr, TypeSpec};
+use crate::lexer::TokenKind;
+
+extern {
+    type Location = usize;
+    enum TokenKind {
+        KW_PROGRAM => TokenKind::KwProgram,
+        KW_END => TokenKind::KwEnd,
+        KW_FUNCTION => TokenKind::KwFunction,
+        KW_RETURN => TokenKind::KwReturn,
+        KW_IMPLICIT => TokenKind::KwImplicit,
+        KW_NONE => TokenKind::KwNone,
+        KW_PRINT => TokenKind::KwPrint,
+        KW_READ => TokenKind::KwRead,
+        KW_IF => TokenKind::KwIf,
+        KW_THEN => TokenKind::KwThen,
+        KW_ELSE => TokenKind::KwElse,
+        KW_DO => TokenKind::KwDo,
+        KW_INTEGER => TokenKind::KwInteger,
+        KW_REAL => TokenKind::KwReal,
+        KW_DOUBLE => TokenKind::KwDouble,
+        KW_PRECISION => TokenKind::KwPrecision,
+        KW_CHARACTER => TokenKind::KwCharacter,
+        KW_LOGICAL => TokenKind::KwLogical,
+        KW_LEN => TokenKind::KwLen,
+        ID => TokenKind::Ident(<String>),
+        STR => TokenKind::Str(<String>),
+        FLOAT => TokenKind::Float(<String>),
+        INT => TokenKind::Integer(<String>),
+        TRUE => TokenKind::True,
+        FALSE => TokenKind::False,
+        COMMA => TokenKind::Comma,
+        STAR => TokenKind::Star,
+        DCOLON => TokenKind::DColon,
+        EQ => TokenKind::Eq,
+        LPAREN => TokenKind::LParen,
+        RPAREN => TokenKind::RParen,
+        // New operators
+        PLUS => TokenKind::Plus,
+        MINUS => TokenKind::Minus,
+        SLASH => TokenKind::Slash,
+        POW => TokenKind::Pow,
+        CONCAT => TokenKind::Concat,
+        EQEQ => TokenKind::EqEq,
+        NE => TokenKind::Ne,
+        LT => TokenKind::Lt,
+        GT => TokenKind::Gt,
+        LE => TokenKind::Le,
+        GE => TokenKind::Ge,
+        AND => TokenKind::And,
+        OR => TokenKind::Or,
+        NOT => TokenKind::Not,
+        EQV => TokenKind::Eqv,
+        NEQV => TokenKind::Neqv,
+        KW_SUBROUTINE => TokenKind::KwSubroutine,
+        KW_CALL => TokenKind::KwCall,
+        KW_CONTAINS => TokenKind::KwContains,
+        KW_USE => TokenKind::KwUse,
+        KW_MODULE => TokenKind::KwModule,
+    }
+}
+
+LeadingFuncs: Vec<Stmt> = {
+    <f: FuncDef> => vec![f],
+    <s: SubrDef> => vec![s],
+    <d: PreFuncDecl> => vec![d],
+    <m: ModuleDef> => vec![m],
+    <mut v: LeadingFuncs> <f: FuncDef> => { v.push(f); v },
+    <mut v: LeadingFuncs> <s: SubrDef> => { v.push(s); v },
+    <mut v: LeadingFuncs> <d: PreFuncDecl> => { v.push(d); v },
+    <mut v: LeadingFuncs> <m: ModuleDef> => { v.push(m); v },
+};
+
+ModuleDef: Stmt = {
+    KW_MODULE <mn: Ident> <mb: Stmts> KW_END KW_MODULE <_emn: Ident> => Stmt::Module { name: mn, body: mb },
+    KW_MODULE <mn: Ident> <mb: Stmts> KW_CONTAINS <contained: FuncList> KW_END KW_MODULE <_emn: Ident> => { let mut all = mb; all.extend(contained); Stmt::Module { name: mn, body: all } },
+};
+
+pub Program: Program = {
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <post: FuncList> => {
+        let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
+    },
+    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> KW_END <_tail: EndTail> => {
+        let mut all = body; all.extend(contained); Program { name, body: all }
+    },
+    KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <funcs: FuncList> => {
+        let mut all = body; all.extend(funcs); Program { name, body: all }
+    },
+    <only: LeadingFuncs> => Program { name: "<anon>".to_string(), body: only },
+};
+
+FuncList: Vec<Stmt> = {
+    /* empty */ => vec![],
+    <v: FuncList> <f: FuncDef> => { let mut v = v; v.push(f); v },
+    <v: FuncList> <s: SubrDef> => { let mut v = v; v.push(s); v },
+    <v: FuncList> <d: PreFuncDecl> => { let mut v = v; v.push(d); v },
+};
+
+FuncDef: Stmt = {
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body },
+};
+
+SubrDef: Stmt = {
+    KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_SUBROUTINE <_endname: Ident> => Stmt::Subroutine { name, params, body },
+};
+
+EndTail: () = {
+    /* empty */ => (),
+    KW_PROGRAM Ident => (),
+};
+
+Ident: String = { <s:ID> => s };
+
+IdentList: Vec<String> = {
+    <id: Ident> => vec![id],
+    <mut v: IdentList> COMMA <id: Ident> => { v.push(id); v },
+};
+
+Stmts: Vec<Stmt> = {
+    /* empty */ => vec![],
+    <v: Stmts> <s: Stmt> => { let mut v = v; v.push(s); v },
+};
+
+Stmt: Stmt = {
+    KW_PRINT STAR COMMA <es: ExprList> => Stmt::Print { items: es },
+    KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
+    KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
+    KW_READ LPAREN STAR COMMA STAR RPAREN <es: ExprList> => {
+        let mut cloned: Vec<Expr> = Vec::new();
+        for e in &es { cloned.push(e.clone()); }
+        Stmt::Read { args: cloned }
+    },
+    KW_READ STAR COMMA STAR COMMA <es: ExprList> => {
+        let mut cloned: Vec<Expr> = Vec::new();
+        for e in &es { cloned.push(e.clone()); }
+        Stmt::Read { args: cloned }
+    },
+    KW_CALL <name: Ident> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
+    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: None },
+    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_ELSE <else_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: Some(else_stmts) },
+    KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
+    KW_RETURN => Stmt::Return(None),
+    <t: TypeSpec> COMMA Ident LPAREN Ident RPAREN DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
+    <t: TypeSpec> DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
+    <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
+    KW_USE <m: Ident> => Stmt::Use { module: m },
+    KW_IMPLICIT KW_NONE => Stmt::ImplicitNone,
+};
+
+ParamList: Vec<String> = {
+    /* empty */ => vec![],
+    <id: Ident> => vec![id],
+    <mut v: ParamList> COMMA <id: Ident> => { v.push(id); v },
+};
+
+CondExpr: Expr = { <e: OrExpr> => e };
+
+TypeSpec: TypeSpec = {
+    KW_INTEGER => TypeSpec::Integer(None),
+    KW_INTEGER LPAREN <k: INT> RPAREN => {
+        let kk: Option<u8> = k.parse::<u32>().ok().and_then(|v| u8::try_from(v).ok());
+        TypeSpec::Integer(kk)
+    },
+    KW_REAL => TypeSpec::Real,
+    KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
+    KW_CHARACTER => TypeSpec::Character(None),
+    KW_CHARACTER LPAREN KW_LEN EQ <n: INT> RPAREN => {
+        let len = n.parse::<usize>().unwrap_or(0);
+        TypeSpec::Character(Some(len))
+    },
+    KW_LOGICAL => TypeSpec::Logical,
+};
+
+ExprList: Vec<Expr> = {
+    <e: RhsExpr> => vec![e],
+    <mut v: ExprList> COMMA <e: RhsExpr> => { v.push(e); v },
+};
+
+RhsExpr: Expr = { <e: OrExpr> => e };
+
+// Precedence climbing
+OrExpr: Expr = {
+    <l: AndExpr> => l,
+    <l: OrExpr> OR <r: AndExpr> => Expr::or(l, r),
+};
+
+AndExpr: Expr = {
+    <l: EqvExpr> => l,
+    <l: AndExpr> AND <r: EqvExpr> => Expr::and(l, r),
+};
+
+EqvExpr: Expr = {
+    <l: RelExpr> => l,
+    <l: EqvExpr> EQV <r: RelExpr> => Expr::eqv(l, r),
+    <l: EqvExpr> NEQV <r: RelExpr> => Expr::neqv(l, r),
+};
+
+RelExpr: Expr = {
+    <l: ConcatExpr> => l,
+    <l: RelExpr> EQEQ <r: ConcatExpr> => Expr::eq(l, r),
+    <l: RelExpr> NE <r: ConcatExpr> => Expr::ne(l, r),
+    <l: RelExpr> LT <r: ConcatExpr> => Expr::lt(l, r),
+    <l: RelExpr> GT <r: ConcatExpr> => Expr::gt(l, r),
+    <l: RelExpr> LE <r: ConcatExpr> => Expr::le(l, r),
+    <l: RelExpr> GE <r: ConcatExpr> => Expr::ge(l, r),
+};
+
+ConcatExpr: Expr = {
+    <l: AddExpr> => l,
+    <l: ConcatExpr> CONCAT <r: AddExpr> => Expr::concat(l, r),
+};
+
+AddExpr: Expr = {
+    <l: MulExpr> => l,
+    <l: AddExpr> PLUS <r: MulExpr> => Expr::add(l, r),
+    <l: AddExpr> MINUS <r: MulExpr> => Expr::sub(l, r),
+};
+
+MulExpr: Expr = {
+    <l: PowExpr> => l,
+    <l: MulExpr> STAR <r: PowExpr> => Expr::mul(l, r),
+    <l: MulExpr> SLASH <r: PowExpr> => Expr::div(l, r),
+};
+
+PowExpr: Expr = {
+    <l: UnaryExpr> => l,
+    <l: UnaryExpr> POW <r: PowExpr> => Expr::pow(l, r),
+};
+
+UnaryExpr: Expr = {
+    <p: Primary> => p,
+    MINUS <p: UnaryExpr> => Expr::neg(p),
+    NOT <p: UnaryExpr> => Expr::not(p),
+};
+
+Primary: Expr = {
+    <n: INT> => Expr::IntLit(n),
+    <f: FLOAT> => Expr::RealLit(f),
+    <s: STR> => Expr::Str(s),
+    TRUE => Expr::Logical(true),
+    FALSE => Expr::Logical(false),
+    <id: Ident> LPAREN <args: CallArgList> RPAREN => Expr::Call(id, args),
+    <id: Ident> => Expr::Ident(id),
+    LPAREN <e: OrExpr> RPAREN => e,
+};
+
+CallArgList: Vec<Expr> = {
+    /* empty */ => vec![],
+    <e: RhsExpr> => vec![e],
+    <mut v: CallArgList> COMMA <e: RhsExpr> => { v.push(e); v },
+};
+
+PreFuncDecl: Stmt = { <t: TypeSpec> DCOLON <names: IdentList> => Stmt::VarDecl { kind: t, names } };

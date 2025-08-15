@@ -1,0 +1,6 @@
+/target
+*.exe
+!src/bin/lld-link.exe
+*.obj
+Cargo.lock
+src/fortran.rs

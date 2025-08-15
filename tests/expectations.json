@@ -1,0 +1,124 @@
+{
+  "cases": {
+    "01_comments": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\01_comments.obj\n[link] reading object file \"tests\\\\01_comments.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9216 BYTES, 9.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "comments test passed\r\n"
+    },
+    "02_basic_returns": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\02_basic_returns.obj\n[link] reading object file \"tests\\\\02_basic_returns.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "i: 42\r\nr: 3.5\r\n"
+    },
+    "03_external_decl_and_call": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\03_external_decl_and_call.obj\n[link] reading object file \"tests\\\\03_external_decl_and_call.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "x: 5\r\n"
+    },
+    "04_integer_kinds": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\04_integer_kinds.obj\n[link] reading object file \"tests\\\\04_integer_kinds.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "1242900000000012345678901234567890\r\n"
+    },
+    "05_type_mismatch_in_function_result": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "\u001b[0m\u001b[1m\u001b[38;5;9merror\u001b[0m\u001b[1m: type mismatch in assignment to `bad`\u001b[0m\n  \u001b[0m\u001b[36m┌─\u001b[0m tests\\05_type_mismatch_in_function_result.f90:1:1\n  \u001b[0m\u001b[36m│\u001b[0m\n\u001b[0m\u001b[36m1\u001b[0m \u001b[0m\u001b[36m│\u001b[0m \u001b[0m\u001b[31minteger\u001b[0m :: bad\n  \u001b[0m\u001b[36m│\u001b[0m \u001b[0m\u001b[31m^^^^^^^\u001b[0m\n\n\u001b[0m\u001b[1m\u001b[38;5;11mwarning\u001b[0m\u001b[1m: function or subroutine `bad` is never called\u001b[0m\n  \u001b[0m\u001b[36m┌─\u001b[0m tests\\05_type_mismatch_in_function_result.f90:1:12\n  \u001b[0m\u001b[36m│\u001b[0m\n\u001b[0m\u001b[36m1\u001b[0m \u001b[0m\u001b[36m│\u001b[0m integer :: \u001b[0m\u001b[33mbad\u001b[0m\n  \u001b[0m\u001b[36m│\u001b[0m            \u001b[0m\u001b[33m^^^\u001b[0m\n\nSemantic: type mismatch in assignment to `bad`\nWarning: function or subroutine `bad` is never called\n",
+      "compiler_stdout": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "1242900000000012345678901234567890\r\n"
+    },
+    "06_logical": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\06_logical.obj\n[link] reading object file \"tests\\\\06_logical.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9216 BYTES, 9.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "b_true: .TRUE.\r\nb_false: .FALSE.\r\n"
+    },
+    "07_character": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\07_character.obj\n[link] reading object file \"tests\\\\07_character.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9216 BYTES, 9.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "s: hello world\r\nhello world\r\n"
+    },
+    "08_real_double": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\08_real_double.obj\n[link] reading object file \"tests\\\\08_real_double.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "real: 3.14159\r\ndouble precision: 3.14159265358979\r\n"
+    },
+    "09_if_else": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\09_if_else.obj\n[link] reading object file \"tests\\\\09_if_else.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9216 BYTES, 9.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "if-then works\r\nelse branch\r\n"
+    },
+    "10_do_loop": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\10_do_loop.obj\n[link] reading object file \"tests\\\\10_do_loop.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "loop i:1\r\nloop i:2\r\nloop i:3\r\n"
+    },
+    "11_operators": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\11_operators.obj\n[link] reading object file \"tests\\\\11_operators.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [11264 BYTES, 11.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "ops add: 5\r\nops sub: 6\r\nops mul: 42\r\nops div: 4\r\nops pow: 256.0\r\nops eq: .TRUE.\r\nops ne: .TRUE.\r\nops lt: .TRUE.\r\nops gt: .FALSE.\r\nops le: .TRUE.\r\nops ge: .TRUE.\r\nops and: .FALSE.\r\nops or: .TRUE.\r\nops not: .TRUE.\r\nops eqv: .TRUE.\r\nops neqv: .TRUE.\r\nops concat: hello world\r\n"
+    },
+    "12_functions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\12_functions.obj\n[link] reading object file \"tests\\\\12_functions.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "in foo\r\nbar x: 5\r\ni4: 5\r\n"
+    },
+    "13_subroutine_and_args": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\13_subroutine_and_args.obj\n[link] reading object file \"tests\\\\13_subroutine_and_args.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [11264 BYTES, 11.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "add(10,32): 42\r\nmix(2,5,3): 13\r\nshow3 args: 123\r\nreal_add: 4.0\r\ndp_add: 4.0\r\n"
+    },
+    "14_use": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\math_module.obj\nNo PROGRAM unit found; emitted object file(s) only.\nWrote object: tests\\14_use.obj\n[link] reading object file \"tests\\\\14_use.obj\"\n[link] reading object file \"tests\\\\math_module.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "Result is 8\r\n"
+    },
+    "15_read": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\15_read.obj\n[link] reading object file \"tests\\\\15_read.obj\"\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked \"tests/tmp_test.exe\"\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "Absolute value of t: 6969\r\nYou entered: HELLO and WORLD\r\n"
+    }
+  }
+}

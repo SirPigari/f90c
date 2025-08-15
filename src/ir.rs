@@ -1,0 +1,373 @@
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub funcs: Vec<Function>,
+    #[allow(dead_code)]
+    pub uses_modules: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Vec<IStmt>,
+    pub return_type: Option<crate::ast::TypeSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub enum IExpr {
+    Str(String),
+    IntLit(String),
+    RealLit(String),
+    Logical(bool),
+    Ident(String),
+    Bin(crate::ast::BinOp, Box<IExpr>, Box<IExpr>),
+    Un(crate::ast::UnOp, Box<IExpr>),
+    Call(String, Vec<IExpr>),
+}
+
+#[derive(Debug, Clone)]
+pub enum IStmt {
+    Print(Vec<IExpr>),
+    DeclVar(crate::ast::TypeSpec, String),
+    AssignStr(String, String),
+    AssignIntLit(String, String),
+    AssignRealLit(String, String),
+    AssignBool(String, bool),
+    AssignIdent(String, String),
+    AssignExpr(String, IExpr),
+    Return(Option<IExpr>),
+    If {
+        cond: IExpr,
+        then_body: Vec<IStmt>,
+        else_body: Option<Vec<IStmt>>,
+    },
+    Do {
+        var: String,
+        start: IExpr,
+        end: IExpr,
+        body: Vec<IStmt>,
+    },
+    Call(String, Vec<IExpr>),
+    Read(Vec<IExpr>),
+}
+
+#[derive(Debug, Clone)]
+pub struct LowerOutput {
+    pub module: Module,
+    pub defines_modules: Vec<String>,
+    pub uses_modules: Vec<String>,
+    pub has_program: bool,
+    pub module_only: bool,
+}
+
+use crate::ast::{Expr, Program, Stmt};
+use anyhow::Result;
+
+pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
+    let is_library = program.name == "<anon>";
+    let entry_name = if is_library { "__f90c_init" } else { "main" };
+    let mut current = Function {
+        name: entry_name.into(),
+        params: vec![],
+        body: vec![],
+        return_type: None,
+    };
+    let mut funcs: Vec<Function> = vec![];
+    let mut fn_names = std::collections::HashSet::new();
+    for s in &program.body {
+        if let Stmt::Function { name, .. } = s {
+            fn_names.insert(name.clone());
+        } else if let Stmt::Subroutine { name, .. } = s {
+            fn_names.insert(name.clone());
+        }
+    }
+    let mut external_ret: std::collections::HashMap<String, crate::ast::TypeSpec> =
+        std::collections::HashMap::new();
+    for s in &program.body {
+        if let Stmt::VarDecl { kind, names } = s {
+            for n in names {
+                if fn_names.contains(n) {
+                    external_ret.insert(n.clone(), kind.clone());
+                }
+            }
+        }
+    }
+    let mut defines_modules: Vec<String> = Vec::new();
+    let mut uses_modules: Vec<String> = Vec::new();
+    for s in &program.body {
+        match s {
+            Stmt::Module { name, .. } => defines_modules.push(name.to_ascii_lowercase()),
+            Stmt::Use { module } => uses_modules.push(module.to_ascii_lowercase()),
+            _ => {}
+        }
+    }
+    let module_only = !program.body.is_empty()
+        && program
+            .body
+            .iter()
+            .all(|s| matches!(s, Stmt::Module { .. }));
+    let has_program = program.name != "<anon>";
+
+    fn lower_expr(e: &Expr) -> IExpr {
+        match e {
+            Expr::Str(s) => IExpr::Str(s.clone()),
+            Expr::IntLit(s) => IExpr::IntLit(s.clone()),
+            Expr::RealLit(s) => IExpr::RealLit(s.clone()),
+            Expr::Logical(b) => IExpr::Logical(*b),
+            Expr::Ident(id) => IExpr::Ident(id.clone()),
+            Expr::Bin(op, l, r) => {
+                IExpr::Bin(op.clone(), Box::new(lower_expr(l)), Box::new(lower_expr(r)))
+            }
+            Expr::Un(op, e) => IExpr::Un(op.clone(), Box::new(lower_expr(e))),
+            Expr::Call(name, args) => {
+                IExpr::Call(name.clone(), args.iter().map(lower_expr).collect())
+            }
+        }
+    }
+
+    fn lower_stmts(
+        out: &mut Vec<IStmt>,
+        stmts: &[Stmt],
+        collected: &mut Vec<Function>,
+        external_ret: &std::collections::HashMap<String, crate::ast::TypeSpec>,
+    ) {
+        for s in stmts {
+            match s {
+                Stmt::Print { items } => {
+                    let v = items.iter().map(lower_expr).collect();
+                    out.push(IStmt::Print(v));
+                }
+                Stmt::VarDecl { kind, names } => {
+                    let mut kept = Vec::new();
+                    for n in names {
+                        if !external_ret.contains_key(n) {
+                            kept.push(n.clone());
+                        }
+                    }
+                    if !kept.is_empty() {
+                        for n in kept {
+                            out.push(IStmt::DeclVar(kind.clone(), n));
+                        }
+                    }
+                }
+                Stmt::Assign { name, value } => match value {
+                    Expr::Str(s) => out.push(IStmt::AssignStr(name.clone(), s.clone())),
+                    Expr::IntLit(s) => out.push(IStmt::AssignIntLit(name.clone(), s.clone())),
+                    Expr::RealLit(s) => out.push(IStmt::AssignRealLit(name.clone(), s.clone())),
+                    Expr::Logical(b) => out.push(IStmt::AssignBool(name.clone(), *b)),
+                    Expr::Ident(id) => out.push(IStmt::AssignIdent(name.clone(), id.clone())),
+                    _ => out.push(IStmt::AssignExpr(name.clone(), lower_expr(value))),
+                },
+                Stmt::Return(opt) => {
+                    out.push(IStmt::Return(opt.as_ref().map(lower_expr)));
+                }
+                Stmt::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    let mut then_ir = Vec::new();
+                    lower_stmts(&mut then_ir, then_body, collected, external_ret);
+                    let else_ir = else_body.as_ref().map(|eb| {
+                        let mut v = Vec::new();
+                        lower_stmts(&mut v, eb, collected, external_ret);
+                        v
+                    });
+                    out.push(IStmt::If {
+                        cond: lower_expr(cond),
+                        then_body: then_ir,
+                        else_body: else_ir,
+                    });
+                }
+                Stmt::Do {
+                    var,
+                    start,
+                    end,
+                    body,
+                } => {
+                    let mut body_ir = Vec::new();
+                    lower_stmts(&mut body_ir, body, collected, external_ret);
+                    out.push(IStmt::Do {
+                        var: var.clone(),
+                        start: lower_expr(start),
+                        end: lower_expr(end),
+                        body: body_ir,
+                    });
+                }
+                Stmt::Function {
+                    name,
+                    params,
+                    return_type: rt,
+                    body,
+                } => {
+                    let mut f_body: Vec<IStmt> = Vec::new();
+                    lower_stmts(&mut f_body, body, collected, external_ret);
+                    if !params.is_empty() {
+                        let param_set: std::collections::HashSet<_> =
+                            params.iter().cloned().collect();
+                        f_body.retain(|st| match st {
+                            IStmt::DeclVar(_, var) if param_set.contains(var) => false,
+                            _ => true,
+                        });
+                    }
+                    let eff_rt = if rt.is_none() {
+                        external_ret.get(name).cloned()
+                    } else {
+                        rt.clone()
+                    };
+                    collected.push(Function {
+                        name: name.clone(),
+                        params: params.clone(),
+                        body: f_body,
+                        return_type: eff_rt,
+                    });
+                }
+                Stmt::Subroutine { name, params, body } => {
+                    let mut f_body: Vec<IStmt> = Vec::new();
+                    lower_stmts(&mut f_body, body, collected, external_ret);
+                    collected.push(Function {
+                        name: name.clone(),
+                        params: params.clone(),
+                        body: f_body,
+                        return_type: None,
+                    });
+                }
+                Stmt::CallSub { name, args } => {
+                    out.push(IStmt::Call(
+                        name.clone(),
+                        args.iter().map(lower_expr).collect(),
+                    ));
+                }
+                Stmt::Read { args } => {
+                    out.push(IStmt::Read(args.iter().map(lower_expr).collect()));
+                }
+                Stmt::Use { .. } => { /* ignore for now */ }
+                Stmt::Module {
+                    name: _,
+                    body: module_body,
+                } => {
+                    for s in module_body {
+                        match s {
+                            Stmt::Function {
+                                name,
+                                params,
+                                return_type: rt,
+                                body,
+                            } => {
+                                let mut f_body: Vec<IStmt> = Vec::new();
+                                lower_stmts(&mut f_body, body, collected, external_ret);
+                                if !params.is_empty() {
+                                    let param_set: std::collections::HashSet<_> =
+                                        params.iter().cloned().collect();
+                                    f_body.retain(|st| match st {
+                                        IStmt::DeclVar(_, var) if param_set.contains(var) => false,
+                                        _ => true,
+                                    });
+                                }
+                                let eff_rt = if rt.is_none() {
+                                    external_ret.get(name).cloned()
+                                } else {
+                                    rt.clone()
+                                };
+                                collected.push(Function {
+                                    name: name.clone(),
+                                    params: params.clone(),
+                                    body: f_body,
+                                    return_type: eff_rt.clone(),
+                                });
+                            }
+                            Stmt::Subroutine { name, params, body } => {
+                                let mut f_body: Vec<IStmt> = Vec::new();
+                                lower_stmts(&mut f_body, body, collected, external_ret);
+                                collected.push(Function {
+                                    name: name.clone(),
+                                    params: params.clone(),
+                                    body: f_body,
+                                    return_type: None,
+                                });
+                            }
+                            _ => {
+                                lower_stmts(out, std::slice::from_ref(s), collected, external_ret);
+                            }
+                        }
+                    }
+                }
+                Stmt::ImplicitNone => { /* no-op */ }
+            }
+        }
+    }
+
+    for s in &program.body {
+        if let Stmt::Function {
+            name,
+            params,
+            return_type: rt,
+            body,
+        } = s
+        {
+            let mut f_body: Vec<IStmt> = Vec::new();
+            lower_stmts(&mut f_body, body, &mut funcs, &external_ret);
+            let eff_rt = if rt.is_none() {
+                external_ret.get(name).cloned()
+            } else {
+                rt.clone()
+            };
+            let func_name = if is_library && name == "main" {
+                "__f90c_init".to_string()
+            } else {
+                name.clone()
+            };
+            funcs.push(Function {
+                name: func_name,
+                params: params.clone(),
+                body: f_body,
+                return_type: eff_rt,
+            });
+        } else if let Stmt::Subroutine { name, params, body } = s {
+            let mut f_body: Vec<IStmt> = Vec::new();
+            lower_stmts(&mut f_body, body, &mut funcs, &external_ret);
+            let subr_name = if is_library && name == "main" {
+                "__f90c_init".to_string()
+            } else {
+                name.clone()
+            };
+            funcs.push(Function {
+                name: subr_name,
+                params: params.clone(),
+                body: f_body,
+                return_type: None,
+            });
+        } else if let Stmt::VarDecl { kind, names } = s {
+            for n in names {
+                if !external_ret.contains_key(n) {
+                    current.body.push(IStmt::DeclVar(kind.clone(), n.clone()));
+                }
+            }
+        } else {
+            lower_stmts(
+                &mut current.body,
+                std::slice::from_ref(s),
+                &mut funcs,
+                &external_ret,
+            );
+        }
+    }
+    funcs.insert(0, current);
+    if is_library {
+        if let Some(first) = funcs.first() {
+            if first.name == "__f90c_init" && first.body.is_empty() {
+                funcs.remove(0);
+            }
+        }
+    }
+    Ok(LowerOutput {
+        module: Module {
+            funcs,
+            uses_modules: uses_modules.clone(),
+        },
+        defines_modules,
+        uses_modules,
+        has_program,
+        module_only,
+    })
+}
