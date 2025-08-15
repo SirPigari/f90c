@@ -185,7 +185,7 @@ fn declare_externs(
         sprintf: sprintf_ref,
         gcvt: gcvt_ref,
         pow: pow_ref,
-    scanf: scanf_ref,
+        scanf: scanf_ref,
         fmt_s,
         fmt_f64,
         fmt_i64,
@@ -763,7 +763,9 @@ fn print_expr(
                 let mut chain: Vec<String> = Vec::new();
                 while let IExpr::Call(nm, a) = cur_expr {
                     chain.push(nm.to_ascii_lowercase());
-                    if a.is_empty() { break; }
+                    if a.is_empty() {
+                        break;
+                    }
                     cur_expr = &a[0];
                 }
                 match cur_expr {
@@ -795,7 +797,8 @@ fn print_expr(
                             let zero_i8 = b.ins().iconst(ir::types::I8, 0);
 
                             // Helper: store null terminator at tmp[len]
-                            b.ins().store(ir::MemFlags::new(), term_i8, tmp_ptr, *len as i32);
+                            b.ins()
+                                .store(ir::MemFlags::new(), term_i8, tmp_ptr, *len as i32);
 
                             if lname == "trim" {
                                 // Find last non-space index from the front by scanning up to len
@@ -822,8 +825,11 @@ fn print_expr(
                                 // start loop
                                 b.ins().jump(loop_blk, &[]);
                                 b.switch_to_block(loop_blk);
-                                let cur = b.ins().load(ir::types::I64, ir::MemFlags::new(), idx_addr, 0);
-                                let done = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, cur, len_i64);
+                                let cur =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), idx_addr, 0);
+                                let done =
+                                    b.ins().icmp(IntCC::SignedGreaterThanOrEqual, cur, len_i64);
                                 b.ins().brif(done, after_blk, &[], body_blk, &[]);
                                 b.switch_to_block(body_blk);
                                 let p_cur = b.ins().iadd(a, cur);
@@ -852,8 +858,11 @@ fn print_expr(
                                 b.switch_to_block(after_blk);
 
                                 // compute copy length = last+1 if last>=0 else 0
-                                let lastv = b.ins().load(ir::types::I64, ir::MemFlags::new(), last_addr, 0);
-                                let is_neg_last = b.ins().icmp(IntCC::SignedLessThan, lastv, zero_i64);
+                                let lastv =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), last_addr, 0);
+                                let is_neg_last =
+                                    b.ins().icmp(IntCC::SignedLessThan, lastv, zero_i64);
                                 // if negative, nothing to copy -> call printf with empty tmp
                                 let copy_blk = b.create_block();
                                 let done_copy_blk = b.create_block();
@@ -872,12 +881,14 @@ fn print_expr(
                                 let after2 = b.create_block();
                                 b.ins().jump(loop2, &[]);
                                 b.switch_to_block(loop2);
-                                let iv = b.ins().load(ir::types::I64, ir::MemFlags::new(), i_addr, 0);
+                                let iv =
+                                    b.ins().load(ir::types::I64, ir::MemFlags::new(), i_addr, 0);
                                 let cmp2 = b.ins().icmp(IntCC::SignedGreaterThan, iv, lastv);
                                 b.ins().brif(cmp2, after2, &[], body2, &[]);
                                 b.switch_to_block(body2);
                                 let p_src = b.ins().iadd(a, iv);
-                                let ch2 = b.ins().load(ir::types::I8, ir::MemFlags::new(), p_src, 0);
+                                let ch2 =
+                                    b.ins().load(ir::types::I8, ir::MemFlags::new(), p_src, 0);
                                 let p_dst = b.ins().iadd(tmp_ptr, iv);
                                 b.ins().store(ir::MemFlags::new(), ch2, p_dst, 0);
                                 let ivn = b.ins().iadd(iv, one_i64);
@@ -904,8 +915,11 @@ fn print_expr(
                                 let after_blk = b.create_block();
                                 b.ins().jump(loop_blk, &[]);
                                 b.switch_to_block(loop_blk);
-                                let cur = b.ins().load(ir::types::I64, ir::MemFlags::new(), idx_addr2, 0);
-                                let done = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, cur, len_i64);
+                                let cur =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), idx_addr2, 0);
+                                let done =
+                                    b.ins().icmp(IntCC::SignedGreaterThanOrEqual, cur, len_i64);
                                 b.ins().brif(done, after_blk, &[], body_blk, &[]);
                                 b.switch_to_block(body_blk);
                                 let p_cur = b.ins().iadd(a, cur);
@@ -924,7 +938,9 @@ fn print_expr(
                                 b.ins().jump(loop_blk, &[]);
                                 // after_blk contains the start index in idx_slot
                                 b.switch_to_block(after_blk);
-                                let start = b.ins().load(ir::types::I64, ir::MemFlags::new(), idx_addr2, 0);
+                                let start =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), idx_addr2, 0);
                                 // copy from a+start into tmp_ptr starting at 0 until null or len-start
                                 let cnt_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
@@ -938,9 +954,12 @@ fn print_expr(
                                 let after_c = b.create_block();
                                 b.ins().jump(loop_c, &[]);
                                 b.switch_to_block(loop_c);
-                                let cur_cnt = b.ins().load(ir::types::I64, ir::MemFlags::new(), cnt_addr, 0);
+                                let cur_cnt =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), cnt_addr, 0);
                                 let pos = b.ins().iadd(start, cur_cnt);
-                                let cmp_end = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, pos, len_i64);
+                                let cmp_end =
+                                    b.ins().icmp(IntCC::SignedGreaterThanOrEqual, pos, len_i64);
                                 b.ins().brif(cmp_end, after_c, &[], body_c, &[]);
                                 b.switch_to_block(body_c);
                                 let p_src = b.ins().iadd(a, pos);
@@ -954,7 +973,9 @@ fn print_expr(
                                 b.ins().jump(loop_c, &[]);
                                 b.switch_to_block(after_c);
                                 // ensure null terminator at tmp[cur_cnt]
-                                let curc = b.ins().load(ir::types::I64, ir::MemFlags::new(), cnt_addr, 0);
+                                let curc =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), cnt_addr, 0);
                                 let p_term = b.ins().iadd(tmp_ptr, curc);
                                 b.ins().store(ir::MemFlags::new(), term_i8, p_term, 0);
                                 b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
@@ -975,8 +996,11 @@ fn print_expr(
                                 let after_blk = b.create_block();
                                 b.ins().jump(loop_blk, &[]);
                                 b.switch_to_block(loop_blk);
-                                let cur = b.ins().load(ir::types::I64, ir::MemFlags::new(), idx_addr3, 0);
-                                let done = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, cur, len_i64);
+                                let cur =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), idx_addr3, 0);
+                                let done =
+                                    b.ins().icmp(IntCC::SignedGreaterThanOrEqual, cur, len_i64);
                                 b.ins().brif(done, after_blk, &[], body_blk, &[]);
                                 b.switch_to_block(body_blk);
                                 let p_cur = b.ins().iadd(a, cur);
@@ -993,7 +1017,9 @@ fn print_expr(
                                 b.ins().store(ir::MemFlags::new(), nxt, idx_addr3, 0);
                                 b.ins().jump(loop_blk, &[]);
                                 b.switch_to_block(after_blk);
-                                let start = b.ins().load(ir::types::I64, ir::MemFlags::new(), idx_addr3, 0);
+                                let start =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), idx_addr3, 0);
                                 // count content length from start
                                 let cnt_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
@@ -1007,9 +1033,12 @@ fn print_expr(
                                 let after_c = b.create_block();
                                 b.ins().jump(loop_c, &[]);
                                 b.switch_to_block(loop_c);
-                                let cur_cnt = b.ins().load(ir::types::I64, ir::MemFlags::new(), cnt_addr2, 0);
+                                let cur_cnt =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), cnt_addr2, 0);
                                 let pos = b.ins().iadd(start, cur_cnt);
-                                let cmp_end = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, pos, len_i64);
+                                let cmp_end =
+                                    b.ins().icmp(IntCC::SignedGreaterThanOrEqual, pos, len_i64);
                                 b.ins().brif(cmp_end, after_c, &[], body_c, &[]);
                                 b.switch_to_block(body_c);
                                 let p_src = b.ins().iadd(a, pos);
@@ -1023,7 +1052,9 @@ fn print_expr(
                                 b.ins().jump(loop_c, &[]);
                                 b.switch_to_block(after_c);
                                 // cur_cnt now content length
-                                let content_len = b.ins().load(ir::types::I64, ir::MemFlags::new(), cnt_addr2, 0);
+                                let content_len =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), cnt_addr2, 0);
                                 // compute shift = len - content_len
                                 let shift = b.ins().isub(len_i64, content_len);
                                 // create shifted buffer: first write 'shift' spaces, then copy content at tmp[shift..]
@@ -1040,8 +1071,11 @@ fn print_expr(
                                 let after_s = b.create_block();
                                 b.ins().jump(loop_s, &[]);
                                 b.switch_to_block(loop_s);
-                                let iv = b.ins().load(ir::types::I64, ir::MemFlags::new(), i_addr2, 0);
-                                let cmp_s = b.ins().icmp(IntCC::SignedGreaterThanOrEqual, iv, shift);
+                                let iv =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), i_addr2, 0);
+                                let cmp_s =
+                                    b.ins().icmp(IntCC::SignedGreaterThanOrEqual, iv, shift);
                                 b.ins().brif(cmp_s, after_s, &[], body_s, &[]);
                                 b.switch_to_block(body_s);
                                 let p_dst = b.ins().iadd(tmp_ptr, iv);
@@ -1067,7 +1101,9 @@ fn print_expr(
                                 let after_cp = b.create_block();
                                 b.ins().jump(loop_cp, &[]);
                                 b.switch_to_block(loop_cp);
-                                let ci = b.ins().load(ir::types::I64, ir::MemFlags::new(), copy_addr, 0);
+                                let ci =
+                                    b.ins()
+                                        .load(ir::types::I64, ir::MemFlags::new(), copy_addr, 0);
                                 let cmp_cp = b.ins().icmp(IntCC::SignedLessThan, ci, zero_i64);
                                 b.ins().brif(cmp_cp, after_cp, &[], body_cp, &[]);
                                 b.switch_to_block(body_cp);

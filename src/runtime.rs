@@ -935,7 +935,10 @@ pub extern "C" fn f90c_read_i64(out: *mut i64) -> i32 {
         return -1;
     }
     let tok = input.trim();
-    let v = i128::from_str_radix(tok, 10).ok().and_then(|x| i64::try_from(x).ok()).unwrap_or(0);
+    let v = i128::from_str_radix(tok, 10)
+        .ok()
+        .and_then(|x| i64::try_from(x).ok())
+        .unwrap_or(0);
     unsafe {
         *out = v;
     }

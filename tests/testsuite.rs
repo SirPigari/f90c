@@ -66,8 +66,10 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
             .arg(&link_path)
             .output()
             .expect("failed to compile link-with file");
-        exp.compiler_stdout.push_str(&String::from_utf8_lossy(&link_out.stdout));
-        exp.compiler_stderr.push_str(&String::from_utf8_lossy(&link_out.stderr));
+        exp.compiler_stdout
+            .push_str(&String::from_utf8_lossy(&link_out.stdout));
+        exp.compiler_stderr
+            .push_str(&String::from_utf8_lossy(&link_out.stderr));
         if !link_out.status.success() {
             exp.compiler_exit_code = link_out.status.code().unwrap_or(-1);
             return exp;
@@ -85,8 +87,10 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
     comp_cmd.arg(src).arg("-o").arg(&exe_path);
 
     let comp_out = comp_cmd.output().expect("failed to compile main file");
-    exp.compiler_stdout.push_str(&String::from_utf8_lossy(&comp_out.stdout));
-    exp.compiler_stderr.push_str(&String::from_utf8_lossy(&comp_out.stderr));
+    exp.compiler_stdout
+        .push_str(&String::from_utf8_lossy(&comp_out.stdout));
+    exp.compiler_stderr
+        .push_str(&String::from_utf8_lossy(&comp_out.stderr));
     exp.compiler_exit_code = comp_out.status.code().unwrap_or(-1);
 
     if !comp_out.status.success() {
@@ -104,13 +108,17 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
 
         if !echo_input.is_empty() {
             if let Some(mut stdin) = run.stdin.take() {
-                stdin.write_all(echo_input.as_bytes()).expect("failed to write to stdin");
+                stdin
+                    .write_all(echo_input.as_bytes())
+                    .expect("failed to write to stdin");
             }
         }
 
         let output = run.wait_with_output().expect("failed to wait on program");
-        exp.program_stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-        exp.program_stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+        exp.program_stdout
+            .push_str(&String::from_utf8_lossy(&output.stdout));
+        exp.program_stderr
+            .push_str(&String::from_utf8_lossy(&output.stderr));
         exp.program_exit_code = output.status.code().unwrap_or(-1);
     }
 
