@@ -12,7 +12,7 @@ If you want, you can also build `f90c` yourself with Cargo.
 
 1. **Run a prebuilt executable**  
 
-   '''powershell
+   ```powershell
    # Run semantic checks
    f90c.exe check ./tests/01_basic_returns.f90
 
@@ -24,42 +24,42 @@ If you want, you can also build `f90c` yourself with Cargo.
 
    # Run a program directly
    f90c.exe run ./tests/01_basic_returns.f90
-   '''
+   ```
 
 2. **Using `USE` with precompiled objects**  
 
    If your program uses a module compiled to an object file, pass the object first, followed by your main file:  
 
-   '''powershell
+   ```powershell
    f90c.exe lib.obj main.f90
-   '''
+   ```
 
 3. **Optional: Build from source**  
 
-   '''powershell
+   ```powershell
    cargo build
    # The compiled binary will be at target/debug/f90c
-   '''
+   ```
 
 ---
 
 ## CLI Overview
 
-'''
+```
 check <file>           Run semantic checks and print diagnostics
 build <file>           Compile, emit object, and link to executable
 emit-obj <in> <out>    Emit compiled object file
 lex <file>             Print lexer tokens (debug)
 parse <file>           Print parsed AST (debug)
 link <files...>        Link sources or prebuilt objects
-'''
+```
 
 **Warning control:**
 
-'''
+```
 --wall    Enable extra warnings
 --werror  Treat warnings as errors
-'''
+```
 
 ---
 
@@ -67,7 +67,7 @@ link <files...>        Link sources or prebuilt objects
 
 The test harness (`tests/testsuite.rs`) compiles each `.f90` test and compares output against `tests/expectations.json`.
 
-'''powershell
+```powershell
 # Build the compiler (if building from source)
 cargo build
 
@@ -77,7 +77,7 @@ cargo test -- --nocapture
 # To re-record expected outputs
 $env:TESTSUITE_RECORD = '1'
 cargo test -- --nocapture
-'''
+```
 
 ---
 
