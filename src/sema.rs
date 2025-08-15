@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use crate::ast::{Expr, Program, Stmt, TypeSpec};
+use crate::ast::{CaseItem, Expr, Program, Stmt, TypeSpec};
 use crate::errors::{CompileError, CompileErrorKind};
 use crate::lexer::{Token, TokenKind};
 
@@ -48,7 +48,14 @@ fn warn_or_error(
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
     use codespan_reporting::term::{emit, Config};
-    let treat_as_error = settings.werror || settings.error.contains(&kind_name.to_string());
+    let kn = kind_name.to_ascii_lowercase();
+    // allow list: suppress this warning entirely
+    if settings.allow.contains(&kn) {
+        return;
+    }
+    // deny or error -> treat as error
+    let treat_as_error =
+        settings.werror || settings.error.contains(&kn) || settings.deny.contains(&kn);
     if treat_as_error {
         let diag = Diagnostic::error()
             .with_message(&message)
@@ -321,6 +328,32 @@ pub fn analyze_with_src(
             Stmt::CallSub { name: _, args } => {
                 for a in args {
                     walk_reads_for_program(a, out);
+                }
+            }
+            Stmt::SelectCase {
+                expr,
+                cases,
+                default,
+            } => {
+                walk_reads_for_program(expr, out);
+                for c in cases {
+                    for item in &c.items {
+                        match item {
+                            CaseItem::Range(l, r) => {
+                                walk_reads_for_program(l, out);
+                                walk_reads_for_program(r, out);
+                            }
+                            CaseItem::Single(e) => walk_reads_for_program(e, out),
+                        }
+                    }
+                    for st in &c.body {
+                        walk_stmt_program_reads(st, out);
+                    }
+                }
+                if let Some(d) = default {
+                    for st in d {
+                        walk_stmt_program_reads(st, out);
+                    }
                 }
             }
             Stmt::If {
@@ -1048,6 +1081,10 @@ pub fn analyze_with_src(
         }
         for p in params.iter() {
             let lname = p.to_ascii_lowercase();
+            if lname == "dummy" {
+                // ignore intentionally-unused parameter named 'dummy'
+                continue;
+            }
             if !read_vars.contains(&lname) {
                 let span = find_ident_span(p);
                 warn_or_error(
@@ -1063,6 +1100,10 @@ pub fn analyze_with_src(
         }
         for name in local_declared_names.iter() {
             let lname = name.to_ascii_lowercase();
+            if lname == "dummy" {
+                // ignore intentionally-unused local variable named 'dummy'
+                continue;
+            }
             if !read_vars.contains(&lname) {
                 if is_function && name.eq_ignore_ascii_case(fname) {
                     continue;
@@ -1375,6 +1416,10 @@ pub fn analyze_with_src(
         if let Stmt::VarDecl { names, .. } = stmt {
             for n in names {
                 let lname = n.to_ascii_lowercase();
+                if lname == "dummy" {
+                    // intentionally ignore frequently unused placeholder variable 'dummy'
+                    continue;
+                }
                 if fn_map.contains_key(&lname) || external_fn_ret.contains_key(&lname) {
                     continue;
                 }

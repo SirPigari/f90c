@@ -2,7 +2,7 @@
 // For now we cover: program unit + optional implicit none + simple
 grammar;
 
-use crate::ast::{Program, Stmt, Expr, TypeSpec};
+use crate::ast::{Program, Stmt, Expr, TypeSpec, CaseBlock, CaseItem, CaseOrDefault};
 use crate::lexer::TokenKind;
 
 extern {
@@ -61,6 +61,9 @@ extern {
         KW_CONTAINS => TokenKind::KwContains,
         KW_USE => TokenKind::KwUse,
         KW_MODULE => TokenKind::KwModule,
+    KW_SELECT => TokenKind::KwSelect,
+    KW_CASE => TokenKind::KwCase,
+    KW_DEFAULT => TokenKind::KwDefault,
     }
 }
 
@@ -149,6 +152,17 @@ Stmt: Stmt = {
     <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     KW_USE <m: Ident> => Stmt::Use { module: m },
     KW_IMPLICIT KW_NONE => Stmt::ImplicitNone,
+    KW_SELECT KW_CASE LPAREN <e: RhsExpr> RPAREN <case_blocks: CaseBlocks> KW_END KW_SELECT => {
+        let mut default: Option<Vec<Stmt>> = None;
+        let mut blocks: Vec<CaseBlock> = Vec::new();
+        for cb in case_blocks {
+            match cb {
+                CaseOrDefault::Case(b) => blocks.push(b),
+                CaseOrDefault::Default(d) => default = Some(d),
+            }
+        }
+        Stmt::SelectCase { expr: e, cases: blocks, default }
+    },
 };
 
 ParamList: Vec<String> = {
@@ -252,6 +266,27 @@ CallArgList: Vec<Expr> = {
     /* empty */ => vec![],
     <e: RhsExpr> => vec![e],
     <mut v: CallArgList> COMMA <e: RhsExpr> => { v.push(e); v },
+};
+
+CaseBlocks: Vec<CaseOrDefault> = {
+    /* empty */ => vec![],
+    <mut v: CaseBlocks> <cb: CaseBlockRule> => { v.push(cb); v },
+};
+
+CaseBlockRule: CaseOrDefault = {
+    KW_CASE KW_DEFAULT <body: Stmts> => CaseOrDefault::Default(body),
+    KW_CASE LPAREN <items: CaseItemList> RPAREN <body: Stmts> => CaseOrDefault::Case(CaseBlock { items, body }),
+    KW_DEFAULT <body: Stmts> => CaseOrDefault::Default(body),
+};
+
+CaseItemList: Vec<CaseItem> = {
+    <it: CaseItem> => vec![it],
+    <mut v: CaseItemList> COMMA <it: CaseItem> => { v.push(it); v },
+};
+
+CaseItem: CaseItem = {
+    <l: RhsExpr> DCOLON <r: RhsExpr> => CaseItem::Range(l, r),
+    <e: RhsExpr> => CaseItem::Single(e),
 };
 
 PreFuncDecl: Stmt = { <t: TypeSpec> DCOLON <names: IdentList> => Stmt::VarDecl { kind: t, names } };

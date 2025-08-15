@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
+use crate::ast::{BinOp, CaseItem, Expr, Program, Stmt, TypeSpec, UnOp};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -903,6 +903,96 @@ pub fn interpret(program: &Program) {
                 Stmt::Function { .. } | Stmt::Subroutine { .. } => {}
                 Stmt::Use { .. } | Stmt::Module { .. } => {}
                 Stmt::ImplicitNone => {}
+                Stmt::SelectCase {
+                    expr,
+                    cases,
+                    default,
+                } => {
+                    let (strs, ints, r32, r64, logs) = {
+                        let fr = call_stack.last().unwrap();
+                        (
+                            fr.env_str.clone(),
+                            fr.env_int.clone(),
+                            fr.env_real32.clone(),
+                            fr.env_real64.clone(),
+                            fr.env_log.clone(),
+                        )
+                    };
+                    // Evaluate selector into tuple
+                    let sel = eval_expr(expr, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
+                    let mut matched = false;
+                    for cb in cases {
+                        for item in &cb.items {
+                            match item {
+                                CaseItem::Single(e) => {
+                                    let v = eval_expr(
+                                        e, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
+                                    );
+                                    // Compare based on available types: prefer integer, then real, then string
+                                    let eq = if let (Some(si), Some(ii)) = (sel.0, v.0) {
+                                        si == ii
+                                    } else if let (Some(sf), Some(vf)) = (sel.1, v.1) {
+                                        (sf - vf).abs() < 1e-12
+                                    } else if let (Some(ss), Some(vs)) =
+                                        (sel.3.clone(), v.3.clone())
+                                    {
+                                        ss == vs
+                                    } else {
+                                        false
+                                    };
+                                    if eq {
+                                        matched = true;
+                                        if let Some(ret) = exec_stmts(&cb.body, funcs, call_stack) {
+                                            return Some(ret);
+                                        }
+                                        break;
+                                    }
+                                }
+                                CaseItem::Range(l, r) => {
+                                    let lv = eval_expr(
+                                        l, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
+                                    );
+                                    let rv = eval_expr(
+                                        r, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
+                                    );
+                                    if let (Some(si), Some(li), Some(ri)) = (sel.0, lv.0, rv.0) {
+                                        if si >= li && si <= ri {
+                                            matched = true;
+                                            if let Some(ret) =
+                                                exec_stmts(&cb.body, funcs, call_stack)
+                                            {
+                                                return Some(ret);
+                                            }
+                                            break;
+                                        }
+                                    } else if let (Some(sf), Some(lf), Some(rf)) =
+                                        (sel.1, lv.1, rv.1)
+                                    {
+                                        if sf >= lf && sf <= rf {
+                                            matched = true;
+                                            if let Some(ret) =
+                                                exec_stmts(&cb.body, funcs, call_stack)
+                                            {
+                                                return Some(ret);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if matched {
+                            break;
+                        }
+                    }
+                    if !matched {
+                        if let Some(d) = default {
+                            if let Some(ret) = exec_stmts(d, funcs, call_stack) {
+                                return Some(ret);
+                            }
+                        }
+                    }
+                }
             }
             idx += 1;
         }

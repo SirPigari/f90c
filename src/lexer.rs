@@ -70,6 +70,12 @@ pub enum TokenKind {
     KwUse,
     #[token("module", ignore(ascii_case))]
     KwModule,
+    #[token("select", ignore(ascii_case))]
+    KwSelect,
+    #[token("case", ignore(ascii_case))]
+    KwCase,
+    #[token("default", ignore(ascii_case))]
+    KwDefault,
     #[token("**")]
     Pow,
     #[token("//")]

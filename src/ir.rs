@@ -49,6 +49,24 @@ pub enum IStmt {
     },
     Call(String, Vec<IExpr>),
     Read(Vec<IExpr>),
+    SelectCase {
+        selector: IExpr,
+        cases: Vec<IcCase>,
+        default: Option<Vec<IStmt>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct IcCase {
+    pub items: Vec<IcCaseItem>,
+    pub body: Vec<IStmt>,
+}
+
+#[derive(Debug, Clone)]
+pub enum IcCaseItem {
+    Range(IExpr, IExpr),
+    Single(IExpr),
+    Multi(Vec<IExpr>),
 }
 
 #[derive(Debug, Clone)]
@@ -241,6 +259,60 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                 Stmt::Read { args } => {
                     out.push(IStmt::Read(args.iter().map(lower_expr).collect()));
                 }
+                Stmt::SelectCase {
+                    expr,
+                    cases,
+                    default,
+                } => {
+                    let selector = lower_expr(expr);
+                    let mut icases: Vec<IcCase> = Vec::new();
+                    for cb in cases {
+                        let mut items: Vec<IcCaseItem> = Vec::new();
+                        // convert CaseItem -> IcCaseItem
+                        // Group consecutive Single items into a Multi variant so the
+                        // backend can lower a parenthesized CASE(...,...) as one group.
+                        let mut pending_singles: Vec<IExpr> = Vec::new();
+                        for it in &cb.items {
+                            match it {
+                                crate::ast::CaseItem::Single(e) => {
+                                    pending_singles.push(lower_expr(e));
+                                }
+                                crate::ast::CaseItem::Range(l, r) => {
+                                    if !pending_singles.is_empty() {
+                                        items.push(IcCaseItem::Multi(pending_singles));
+                                        pending_singles = Vec::new();
+                                    }
+                                    items.push(IcCaseItem::Range(lower_expr(l), lower_expr(r)));
+                                }
+                            }
+                        }
+                        if !pending_singles.is_empty() {
+                            if pending_singles.len() == 1 {
+                                items.push(IcCaseItem::Single(pending_singles.remove(0)));
+                            } else {
+                                items.push(IcCaseItem::Multi(pending_singles));
+                            }
+                        }
+                        icases.push(IcCase {
+                            items,
+                            body: {
+                                let mut b = Vec::new();
+                                lower_stmts(&mut b, &cb.body, collected, external_ret);
+                                b
+                            },
+                        });
+                    }
+                    let default_ir = default.as_ref().map(|d| {
+                        let mut v = Vec::new();
+                        lower_stmts(&mut v, d, collected, external_ret);
+                        v
+                    });
+                    out.push(IStmt::SelectCase {
+                        selector,
+                        cases: icases,
+                        default: default_ir,
+                    });
+                }
                 Stmt::Use { .. } => { /* ignore for now */ }
                 Stmt::Module {
                     name: _,
@@ -292,7 +364,7 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                         }
                     }
                 }
-                Stmt::ImplicitNone => { /* no-op */ }
+                Stmt::ImplicitNone => { /* no-op */ } // SelectCase already handled above; nothing to do here
             }
         }
     }

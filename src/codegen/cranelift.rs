@@ -4,7 +4,7 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
 
 use super::Backend;
-use crate::ir::{IExpr, IStmt, Module};
+use crate::ir::{IExpr, IStmt, IcCaseItem, Module};
 
 use cranelift_codegen::ir;
 use cranelift_codegen::ir::InstBuilder; // bring trait into scope
@@ -99,6 +99,7 @@ struct Externs {
     printf: ir::FuncRef,
     sprintf: ir::FuncRef,
     gcvt: ir::FuncRef,
+    strcmp: ir::FuncRef,
     pow: ir::FuncRef,
     scanf: ir::FuncRef,
     // memcpy removed
@@ -171,6 +172,13 @@ fn declare_externs(
     sig_scanf.returns.push(AbiParam::new(types::I32));
     let scanf_id = module.declare_function("scanf", Linkage::Import, &sig_scanf)?;
     let scanf_ref = module.declare_func_in_func(scanf_id, b.func);
+    // strcmp import (C library)
+    let mut sig_strcmp = Signature::new(cc);
+    sig_strcmp.params.push(AbiParam::new(ptr_ty));
+    sig_strcmp.params.push(AbiParam::new(ptr_ty));
+    sig_strcmp.returns.push(AbiParam::new(types::I32));
+    let strcmp_id = module.declare_function("strcmp", Linkage::Import, &sig_strcmp)?;
+    let strcmp_ref = module.declare_func_in_func(strcmp_id, b.func);
     // no memcpy import
     let mut c = 0u32;
     let fmt_s = make_data(module, b, ptr_ty, &mut c, b"%s")?;
@@ -184,6 +192,7 @@ fn declare_externs(
         printf: printf_ref,
         sprintf: sprintf_ref,
         gcvt: gcvt_ref,
+        strcmp: strcmp_ref,
         pow: pow_ref,
         scanf: scanf_ref,
         fmt_s,
@@ -1546,6 +1555,303 @@ fn gen_stmts(
                         }
                     }
                 }
+            }
+            IStmt::SelectCase {
+                selector,
+                cases,
+                default,
+            } => {
+                // Simple, conservative Select Case lowering:
+                // - supports integer selector (ints map) and character selector (chars map)
+                // - sequentially compares case items and jumps to case blocks on match
+                // - no jump-table optimization yet
+                let cont_blk = b.create_block();
+
+                // Prepare case blocks
+                let mut case_blocks: Vec<ir::Block> = Vec::new();
+                for _ in cases.iter() {
+                    case_blocks.push(b.create_block());
+                }
+                let default_blk = if default.is_some() {
+                    Some(b.create_block())
+                } else {
+                    None
+                };
+
+                // Attempt to handle selector forms
+                // collect temporary 'next' blocks created during sequential compares
+                let mut cmp_next_blocks: Vec<ir::Block> = Vec::new();
+                match selector {
+                    IExpr::Ident(sid) => {
+                        // integer selector
+                        if let Some(ss) = ints.get(sid) {
+                            let sel_addr = b.ins().stack_addr(ptr_ty, *ss, 0);
+                            for (ci, icase) in cases.iter().enumerate() {
+                                // each case may have multiple items
+                                for item in &icase.items {
+                                    match item {
+                                        IcCaseItem::Single(e) => {
+                                            if let IExpr::IntLit(s) = e {
+                                                if let Ok(v128) =
+                                                    i128::from_str_radix(s.as_str(), 10)
+                                                {
+                                                    let v = i64::try_from(v128).unwrap_or(0);
+                                                    let lit = b.ins().iconst(ir::types::I64, v);
+                                                    let selv = b.ins().load(
+                                                        ir::types::I64,
+                                                        ir::MemFlags::new(),
+                                                        sel_addr,
+                                                        0,
+                                                    );
+                                                    let cmp = b.ins().icmp(
+                                                        ir::condcodes::IntCC::Equal,
+                                                        selv,
+                                                        lit,
+                                                    );
+                                                    // branch to case block on equal, else continue
+                                                    let next = b.create_block();
+                                                    cmp_next_blocks.push(next);
+                                                    b.ins().brif(
+                                                        cmp,
+                                                        case_blocks[ci],
+                                                        &[],
+                                                        next,
+                                                        &[],
+                                                    );
+                                                    b.switch_to_block(next);
+                                                }
+                                            } else if let IExpr::Ident(id2) = e {
+                                                if let Some(ss2) = ints.get(id2) {
+                                                    let a2 = b.ins().stack_addr(ptr_ty, *ss2, 0);
+                                                    let v2 = b.ins().load(
+                                                        ir::types::I64,
+                                                        ir::MemFlags::new(),
+                                                        a2,
+                                                        0,
+                                                    );
+                                                    let selv = b.ins().load(
+                                                        ir::types::I64,
+                                                        ir::MemFlags::new(),
+                                                        sel_addr,
+                                                        0,
+                                                    );
+                                                    let cmp = b.ins().icmp(
+                                                        ir::condcodes::IntCC::Equal,
+                                                        selv,
+                                                        v2,
+                                                    );
+                                                    let next = b.create_block();
+                                                    cmp_next_blocks.push(next);
+                                                    b.ins().brif(
+                                                        cmp,
+                                                        case_blocks[ci],
+                                                        &[],
+                                                        next,
+                                                        &[],
+                                                    );
+                                                    b.switch_to_block(next);
+                                                }
+                                            }
+                                        }
+                                        IcCaseItem::Range(l, r) => {
+                                            if let (IExpr::IntLit(ls), IExpr::IntLit(rs)) = (l, r) {
+                                                if let (Ok(lv128), Ok(rv128)) = (
+                                                    i128::from_str_radix(ls.as_str(), 10),
+                                                    i128::from_str_radix(rs.as_str(), 10),
+                                                ) {
+                                                    let lv = i64::try_from(lv128).unwrap_or(0);
+                                                    let rv = i64::try_from(rv128).unwrap_or(0);
+                                                    let lit_l = b.ins().iconst(ir::types::I64, lv);
+                                                    let lit_r = b.ins().iconst(ir::types::I64, rv);
+                                                    let selv = b.ins().load(
+                                                        ir::types::I64,
+                                                        ir::MemFlags::new(),
+                                                        sel_addr,
+                                                        0,
+                                                    );
+                                                    let ge = b.ins().icmp(ir::condcodes::IntCC::SignedGreaterThanOrEqual, selv, lit_l);
+                                                    let le = b.ins().icmp(
+                                                        ir::condcodes::IntCC::SignedLessThanOrEqual,
+                                                        selv,
+                                                        lit_r,
+                                                    );
+                                                    let both = b.ins().band(ge, le);
+                                                    let next = b.create_block();
+                                                    cmp_next_blocks.push(next);
+                                                    b.ins().brif(
+                                                        both,
+                                                        case_blocks[ci],
+                                                        &[],
+                                                        next,
+                                                        &[],
+                                                    );
+                                                    b.switch_to_block(next);
+                                                }
+                                            }
+                                        }
+                                        IcCaseItem::Multi(es) => {
+                                            for e in es.iter() {
+                                                if let IExpr::IntLit(s) = e {
+                                                    if let Ok(v128) =
+                                                        i128::from_str_radix(s.as_str(), 10)
+                                                    {
+                                                        let v = i64::try_from(v128).unwrap_or(0);
+                                                        let lit = b.ins().iconst(ir::types::I64, v);
+                                                        let selv = b.ins().load(
+                                                            ir::types::I64,
+                                                            ir::MemFlags::new(),
+                                                            sel_addr,
+                                                            0,
+                                                        );
+                                                        let cmp = b.ins().icmp(
+                                                            ir::condcodes::IntCC::Equal,
+                                                            selv,
+                                                            lit,
+                                                        );
+                                                        let next = b.create_block();
+                                                        cmp_next_blocks.push(next);
+                                                        b.ins().brif(
+                                                            cmp,
+                                                            case_blocks[ci],
+                                                            &[],
+                                                            next,
+                                                            &[],
+                                                        );
+                                                        b.switch_to_block(next);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some((ss, _len)) = chars.get(sid) {
+                            // character selector: compare against literal items
+                            let _selptr = b.ins().stack_addr(ptr_ty, *ss, 0);
+                            for (ci, icase) in cases.iter().enumerate() {
+                                for item in &icase.items {
+                                    match item {
+                                        IcCaseItem::Single(e) => {
+                                            if let IExpr::Str(lit) = e {
+                                                // materialize literal into data and compare byte-by-byte
+                                                // materialize literal and compare using strcmp
+                                                let bytes = lit.as_bytes();
+                                                let litp = make_data(module, b, ptr_ty, dc, bytes)?;
+                                                let selp = b.ins().stack_addr(ptr_ty, *ss, 0);
+                                                let call = b.ins().call(ex.strcmp, &[selp, litp]);
+                                                let res = b.inst_results(call)[0];
+                                                let zero = b.ins().iconst(ir::types::I32, 0);
+                                                let eq = b.ins().icmp(
+                                                    ir::condcodes::IntCC::Equal,
+                                                    res,
+                                                    zero,
+                                                );
+                                                let next = b.create_block();
+                                                cmp_next_blocks.push(next);
+                                                b.ins().brif(eq, case_blocks[ci], &[], next, &[]);
+                                                b.switch_to_block(next);
+                                                // helper blocks from earlier string-compare implementation
+                                                // were removed when switching to strcmp; nothing to seal here
+                                            }
+                                        }
+                                        IcCaseItem::Multi(es) => {
+                                            for e in es.iter() {
+                                                if let IExpr::Str(lit) = e {
+                                                    // reuse single-item string compare logic per element
+                                                    let bytes = lit.as_bytes();
+                                                    let litp =
+                                                        make_data(module, b, ptr_ty, dc, bytes)?;
+                                                    let selp = b.ins().stack_addr(ptr_ty, *ss, 0);
+                                                    let call =
+                                                        b.ins().call(ex.strcmp, &[selp, litp]);
+                                                    let res = b.inst_results(call)[0];
+                                                    let zero = b.ins().iconst(ir::types::I32, 0);
+                                                    let eq = b.ins().icmp(
+                                                        ir::condcodes::IntCC::Equal,
+                                                        res,
+                                                        zero,
+                                                    );
+                                                    let next = b.create_block();
+                                                    cmp_next_blocks.push(next);
+                                                    b.ins().brif(
+                                                        eq,
+                                                        case_blocks[ci],
+                                                        &[],
+                                                        next,
+                                                        &[],
+                                                    );
+                                                    b.switch_to_block(next);
+                                                    // helper blocks from earlier string-compare implementation
+                                                    // were removed when switching to strcmp; nothing to seal here
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Fallback: unsupported selector shape - fall through to default
+                    }
+                }
+
+                // If no match by explicit compares, jump to default or continue
+                if let Some(def_blk) = default_blk {
+                    b.ins().jump(def_blk, &[]);
+                }
+
+                // Seal any temporary compare continuation blocks we created
+                for nb in cmp_next_blocks.iter() {
+                    b.seal_block(*nb);
+                }
+
+                // Emit case bodies
+                for (ci, icase) in cases.iter().enumerate() {
+                    b.switch_to_block(case_blocks[ci]);
+                    let tr = gen_stmts(
+                        b,
+                        ex,
+                        ptr_ty,
+                        module,
+                        dc,
+                        &icase.body,
+                        ints,
+                        reals,
+                        bools,
+                        chars,
+                        real_kind,
+                        i128_vars,
+                        i128_last,
+                        func_meta,
+                        current_fn,
+                    )?;
+                    if tr {
+                        return Ok(true);
+                    }
+                    b.ins().jump(cont_blk, &[]);
+                    // seal this case block now that its predecessors are emitted
+                    b.seal_block(case_blocks[ci]);
+                }
+
+                if let Some(def_blk) = default_blk {
+                    b.switch_to_block(def_blk);
+                    if let Some(dbody) = default {
+                        let tr = gen_stmts(
+                            b, ex, ptr_ty, module, dc, dbody, ints, reals, bools, chars, real_kind,
+                            i128_vars, i128_last, func_meta, current_fn,
+                        )?;
+                        if tr {
+                            return Ok(true);
+                        }
+                    }
+                    b.ins().jump(cont_blk, &[]);
+                    b.seal_block(def_blk);
+                }
+
+                b.seal_block(cont_blk);
+                b.switch_to_block(cont_blk);
             }
         } // end match
     } // end for

@@ -4,3 +4,4 @@
 *.obj
 Cargo.lock
 src/fortran.rs
+tests/expectations.json

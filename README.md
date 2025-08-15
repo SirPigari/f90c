@@ -68,14 +68,15 @@ link <files...>        Link sources or prebuilt objects
 The test harness (`tests/testsuite.rs`) compiles each `.f90` test and compares output against `tests/expectations.json`.
 
 ```powershell
-# Build the compiler (if building from source)
-cargo build
-
-# Run the test harness
+# To record expected outputs
+$env:TESTSUITE_RECORD = 1
 cargo test -- --nocapture
 
-# To re-record expected outputs
-$env:TESTSUITE_RECORD = '1'
+# Modify the compiler...
+
+$env:TESTSUITE_RECORD = 0
+
+# Run the test harness
 cargo test -- --nocapture
 ```
 

@@ -65,6 +65,29 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     ImplicitNone, // new variant
+    SelectCase {
+        expr: Expr,
+        cases: Vec<CaseBlock>,
+        default: Option<Vec<Stmt>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct CaseBlock {
+    pub items: Vec<CaseItem>,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CaseItem {
+    Range(Expr, Expr),
+    Single(Expr),
+}
+
+#[derive(Debug, Clone)]
+pub enum CaseOrDefault {
+    Case(CaseBlock),
+    Default(Vec<Stmt>),
 }
 
 #[derive(Debug, Clone)]

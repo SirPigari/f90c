@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 
 use crate::ast::Program;
 use crate::errors::{CompileError, CompileErrorKind};
@@ -63,6 +63,9 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwContains => "keyword contains".into(),
         TokenKind::KwUse => "keyword use".into(),
         TokenKind::KwModule => "keyword module".into(),
+        TokenKind::KwSelect => "keyword select".into(),
+        TokenKind::KwCase => "keyword case".into(),
+        TokenKind::KwDefault => "keyword default".into(),
         TokenKind::Ident(s) => format!("identifier {}", s),
         TokenKind::Str(s) => format!("string literal {:?}", s),
         TokenKind::Float(x) => format!("real literal {}", x),
