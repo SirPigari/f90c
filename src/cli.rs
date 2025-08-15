@@ -61,6 +61,9 @@ pub struct Cli {
 
     #[structopt(subcommand)]
     pub cmd: Option<Command>,
+
+    #[structopt(long = "version", short = "v", help = "Show version information")]
+    pub version: bool,
 }
 
 #[derive(Debug, StructOpt, Clone)]

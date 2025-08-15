@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -8,7 +9,6 @@ fn main() {
 
     let bin_dir = manifest_dir.join("src").join("bin");
 
-    // Files to always copy
     let mut bundle_files: Vec<&str> = vec![];
 
     if cfg!(windows) {
@@ -36,5 +36,22 @@ fn main() {
     println!("cargo:rerun-if-changed=src/fortran.lalrpop");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/bin");
+
     lalrpop::process_root().unwrap();
+
+    let linker_version = if cfg!(windows) {
+        Command::new(bin_dir.join("lld-link.exe"))
+            .arg("--version")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "unknown".to_string())
+    } else {
+        Command::new(bin_dir.join("ld.lld"))
+            .arg("--version")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "unknown".to_string())
+    };
+
+    println!("cargo:rustc-env=LINKER_VERSION={}", linker_version);
 }

@@ -29,15 +29,23 @@ fn main() -> Result<()> {
     env_logger::init();
     let args = cli::Cli::from_args();
 
+    if args.help {
+        utils::print_help();
+        return Ok(());
+    }
+
+    if args.version {
+        let version = env!("CARGO_PKG_VERSION");
+        println!("f90c version: {}", version);
+        let linker_version = env!("LINKER_VERSION");
+        println!("linker version: {}", linker_version);
+        return Ok(());
+    }
+
     if args.cmd.is_none() && !args.inputs.is_empty() {
         if handle_top_level_invocation(&args)? {
             return Ok(());
         }
-    }
-
-    if args.help {
-        utils::print_help();
-        return Ok(());
     }
 
     match args.cmd.clone().unwrap_or(cli::Command::Help) {
