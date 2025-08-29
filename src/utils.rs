@@ -103,7 +103,7 @@ pub fn format_bytes(bytes: usize) -> String {
 }
 
 pub fn print_help() {
-    println!("Usage: f90c [OPTIONS] <COMMAND> [ARGS]");
+    println!("Usage: f90c <COMMAND> [OPTIONS] [ARGS]");
     println!("\nCommands:");
     println!("  lex <input>          Lex the input file and print tokens");
     println!("  parse <input>        Parse the input file and print the AST");

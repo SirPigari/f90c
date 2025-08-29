@@ -1,8 +1,7 @@
-﻿use crate::codegen::Backend;
+use crate::codegen::Backend;
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};
 use structopt::StructOpt;
-
 
 mod ast;
 mod cli;
@@ -713,11 +712,13 @@ fn compile_to_object(
 
                         // emit codespan diagnostic
                         use codespan_reporting::diagnostic::{Diagnostic, Label};
-                        use codespan_reporting::term::{emit, Config};
                         use codespan_reporting::files::SimpleFile;
                         use codespan_reporting::term::termcolor::StandardStream;
+                        use codespan_reporting::term::{emit, Config};
 
-                        let mut stderr = StandardStream::stderr(codespan_reporting::term::termcolor::ColorChoice::Auto);
+                        let mut stderr = StandardStream::stderr(
+                            codespan_reporting::term::termcolor::ColorChoice::Auto,
+                        );
                         let file = SimpleFile::new(input.to_str().unwrap_or("<unknown>"), &src);
                         let diag = Diagnostic::error()
                             .with_message(msg)

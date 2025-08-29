@@ -171,6 +171,12 @@ pub fn analyze_with_src(
                     sym.insert(n.to_ascii_lowercase(), kind.clone());
                 }
             }
+            // Array declarations (single name) should also register the declared
+            // variable name into the symbol table so `a(5)` is recognized as an
+            // array access rather than an undefined function call.
+            Stmt::ArrayDecl { kind, name, .. } => {
+                sym.insert(name.to_ascii_lowercase(), kind.clone());
+            }
             // Treat DO loop index at program top-level as an implicitly-declared Integer
             Stmt::Do { var, .. } => {
                 sym.insert(var.to_ascii_lowercase(), TypeSpec::Integer(None));
@@ -192,7 +198,11 @@ pub fn analyze_with_src(
                     collect_do_vars(st, out);
                 }
             }
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 for st in then_body {
                     collect_do_vars(st, out);
                 }
@@ -275,7 +285,11 @@ pub fn analyze_with_src(
                     check_loop_usage(st, loop_depth + 1, tokens, stderr, file, errors);
                 }
             }
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 for st in then_body {
                     check_loop_usage(st, loop_depth, tokens, stderr, file, errors);
                 }
@@ -392,7 +406,11 @@ pub fn analyze_with_src(
             Expr::Ident(id) => {
                 out.insert(id.to_ascii_lowercase());
             }
-            Expr::Call(_, args) => {
+            Expr::Call(name, args) => {
+                // Treat parser-emitted calls where the callee is actually an
+                // array access as a read of the identifier so program-level
+                // usage analysis sees `a(i)` as using `a`.
+                out.insert(name.to_ascii_lowercase());
                 for a in args {
                     walk_reads_for_program(a, out);
                 }
@@ -406,8 +424,20 @@ pub fn analyze_with_src(
         }
     }
     fn walk_stmt_program_reads(s: &Stmt, out: &mut HashSet<String>) {
-    match s {
+        match s {
             Stmt::Assign { value, .. } => walk_reads_for_program(value, out),
+            Stmt::AssignIndex {
+                name,
+                indices,
+                value,
+            } => {
+                // assignment to array element counts as a use of the array name
+                out.insert(name.to_ascii_lowercase());
+                for idx in indices {
+                    walk_reads_for_program(idx, out);
+                }
+                walk_reads_for_program(value, out);
+            }
             Stmt::Print { items } => {
                 for it in items {
                     walk_reads_for_program(it, out);
@@ -492,9 +522,18 @@ pub fn analyze_with_src(
     // so using them at program scope should be a semantic error.
     for name in &program_level_reads {
         let lname = name.to_ascii_lowercase();
+        // Consider a name known if it's a program variable, a declared
+        // function/subroutine name, a module-level function, or an external
+        // intrinsic/declared function return. fn_map may be populated later
+        // but `fn_name_set` already contains declared function/subroutine
+        // identifiers, so check it here to avoid false undefined-variable
+        // reports for functions that are declared later in the file.
         if sym.contains_key(&lname)
             || fn_map.contains_key(&lname)
+            || fn_name_set.contains(&lname)
+            || module_fn_names.contains(&lname)
             || external_fn_ret.contains_key(&lname)
+            || linked_obj_exports.contains(&lname)
         {
             continue;
         }
@@ -892,6 +931,7 @@ pub fn analyze_with_src(
             Expr::Logical(_) => Some(TypeSpec::Logical),
             Expr::Str(_) => Some(TypeSpec::Character(None)),
             Expr::Ident(id) => sym.get(&id.to_ascii_lowercase()).cloned(),
+            Expr::Index(name, _inds) => sym.get(&name.to_ascii_lowercase()).cloned(),
             Expr::Un(_, inner) => infer_expr_type(inner, sym, fn_map, external_fn_ret),
             Expr::Bin(op, l, r) => {
                 use crate::ast::BinOp::*;
@@ -1208,7 +1248,13 @@ pub fn analyze_with_src(
                             );
                         }
                     }
-                    Stmt::Do { var, start, end, body: loop_body, .. } => {
+                    Stmt::Do {
+                        var,
+                        start,
+                        end,
+                        body: loop_body,
+                        ..
+                    } => {
                         // declare loop index as local integer (common Fortran behavior)
                         let lname = var.to_ascii_lowercase();
                         let mut new_local = local.clone();
@@ -1252,6 +1298,12 @@ pub fn analyze_with_src(
             match e {
                 Expr::Ident(id) => {
                     read_vars.insert(id.to_ascii_lowercase());
+                }
+                Expr::Index(name, args) => {
+                    read_vars.insert(name.to_ascii_lowercase());
+                    for a in args {
+                        walk_reads_in_expr(a, read_vars);
+                    }
                 }
                 Expr::Call(_, args) => {
                     for a in args {
@@ -1914,23 +1966,30 @@ pub fn analyze_with_src(
         e: &'a Expr,
         fn_map: &HashMap<String, FnInfo>,
         external_fn_ret: &HashMap<String, TypeSpec>,
+        sym: &HashMap<String, TypeSpec>,
         undef: &mut Vec<&'a str>,
     ) {
         match e {
             Expr::Call(name, args) => {
                 let lname = name.to_ascii_lowercase();
-                if !fn_map.contains_key(&lname) && !external_fn_ret.contains_key(&lname) {
+                // If name is a declared variable it is an array indexing expression
+                // (parser currently emits Call for ident(args)). In that case do
+                // not report it as an undefined function.
+                if !sym.contains_key(&lname)
+                    && !fn_map.contains_key(&lname)
+                    && !external_fn_ret.contains_key(&lname)
+                {
                     undef.push(name);
                 }
                 for a in args {
-                    walk_expr_undef(a, fn_map, external_fn_ret, undef);
+                    walk_expr_undef(a, fn_map, external_fn_ret, sym, undef);
                 }
             }
             Expr::Bin(_, l, r) => {
-                walk_expr_undef(l, fn_map, external_fn_ret, undef);
-                walk_expr_undef(r, fn_map, external_fn_ret, undef);
+                walk_expr_undef(l, fn_map, external_fn_ret, sym, undef);
+                walk_expr_undef(r, fn_map, external_fn_ret, sym, undef);
             }
-            Expr::Un(_, inner) => walk_expr_undef(inner, fn_map, external_fn_ret, undef),
+            Expr::Un(_, inner) => walk_expr_undef(inner, fn_map, external_fn_ret, sym, undef),
             _ => {}
         }
     }
@@ -1938,49 +1997,55 @@ pub fn analyze_with_src(
         s: &'a Stmt,
         fn_map: &HashMap<String, FnInfo>,
         external_fn_ret: &HashMap<String, TypeSpec>,
+        sym: &HashMap<String, TypeSpec>,
         undef: &mut Vec<&'a str>,
     ) {
         match s {
-            Stmt::Assign { value, .. } => walk_expr_undef(value, fn_map, external_fn_ret, undef),
-            Stmt::Return(Some(e)) => walk_expr_undef(e, fn_map, external_fn_ret, undef),
+            Stmt::Assign { value, .. } => {
+                walk_expr_undef(value, fn_map, external_fn_ret, sym, undef)
+            }
+            Stmt::Return(Some(e)) => walk_expr_undef(e, fn_map, external_fn_ret, sym, undef),
             Stmt::If {
                 cond,
                 then_body,
                 else_body,
             } => {
-                walk_expr_undef(cond, fn_map, external_fn_ret, undef);
+                walk_expr_undef(cond, fn_map, external_fn_ret, sym, undef);
                 for st in then_body {
-                    walk_stmt_undef(st, fn_map, external_fn_ret, undef);
+                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
                 }
                 if let Some(eb) = else_body {
                     for st in eb {
-                        walk_stmt_undef(st, fn_map, external_fn_ret, undef);
+                        walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
                     }
                 }
             }
             Stmt::Do {
                 start, end, body, ..
             } => {
-                walk_expr_undef(start, fn_map, external_fn_ret, undef);
-                walk_expr_undef(end, fn_map, external_fn_ret, undef);
+                walk_expr_undef(start, fn_map, external_fn_ret, sym, undef);
+                walk_expr_undef(end, fn_map, external_fn_ret, sym, undef);
                 for st in body {
-                    walk_stmt_undef(st, fn_map, external_fn_ret, undef);
+                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
                 }
             }
             Stmt::CallSub { name, args } => {
                 let lname = name.to_ascii_lowercase();
-                if !fn_map.contains_key(&lname) && !external_fn_ret.contains_key(&lname) {
+                if !sym.contains_key(&lname)
+                    && !fn_map.contains_key(&lname)
+                    && !external_fn_ret.contains_key(&lname)
+                {
                     undef.push(name);
                 }
                 for a in args {
-                    walk_expr_undef(a, fn_map, external_fn_ret, undef);
+                    walk_expr_undef(a, fn_map, external_fn_ret, sym, undef);
                 }
             }
             Stmt::Function { body, .. }
             | Stmt::Subroutine { body, .. }
             | Stmt::Module { body, .. } => {
                 for st in body {
-                    walk_stmt_undef(st, fn_map, external_fn_ret, undef);
+                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
                 }
             }
             _ => {}
@@ -1988,7 +2053,7 @@ pub fn analyze_with_src(
     }
     let mut undef_calls: Vec<&str> = Vec::new();
     for stmt in &program.body {
-        walk_stmt_undef(stmt, &fn_map, &external_fn_ret, &mut undef_calls);
+        walk_stmt_undef(stmt, &fn_map, &external_fn_ret, &sym, &mut undef_calls);
     }
     use std::collections::HashSet as _HashSet;
     let mut seen_undef = _HashSet::new();

@@ -128,6 +128,13 @@ IdentList: Vec<String> = {
     <mut v: IdentList> COMMA <id: Ident> => { v.push(id); v },
 };
 
+// attribute list used in declarations, e.g. `integer, intent(in) :: a`.
+AttrList: () = {
+    /* empty */ => (),
+    <v: AttrList> COMMA <id: Ident> LPAREN <arg: Ident> RPAREN => (),
+    <v: AttrList> COMMA <id: Ident> => (),
+};
+
 Stmts: Vec<Stmt> = {
     /* empty */ => vec![],
     <v: Stmts> <s: Stmt> => { let mut v = v; v.push(s); v },
@@ -157,8 +164,13 @@ Stmt: Stmt = {
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
-    <t: TypeSpec> COMMA Ident LPAREN Ident RPAREN DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
-    <t: TypeSpec> DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
+    <t: TypeSpec> <_attrs: AttrList> DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
+    // array declaration with dimensions, e.g. `integer :: a(5)`
+    <t: TypeSpec> <_attrs: AttrList> DCOLON <id: Ident> LPAREN <dims: DimList> RPAREN => {
+        // produce an explicit ArrayDecl so downstream lowering can see dims
+        Stmt::ArrayDecl { kind: t, name: id, dims }
+    },
+    <id: Ident> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
     <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     KW_USE <m: Ident> => Stmt::Use { module: m },
     KW_IMPLICIT KW_NONE => Stmt::ImplicitNone,
@@ -271,6 +283,9 @@ Primary: Expr = {
     <s: STR> => Expr::Str(s),
     TRUE => Expr::Logical(true),
     FALSE => Expr::Logical(false),
+    // Ident(args) can be either a function call or an array indexing expression;
+    // treat it as a function call here (Expr::Call). Array element assignment is
+    // handled at the statement level by the AssignIndex rule above.
     <id: Ident> LPAREN <args: CallArgList> RPAREN => Expr::Call(id, args),
     <id: Ident> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
@@ -280,6 +295,24 @@ CallArgList: Vec<Expr> = {
     /* empty */ => vec![],
     <e: RhsExpr> => vec![e],
     <mut v: CallArgList> COMMA <e: RhsExpr> => { v.push(e); v },
+};
+
+ArrayDeclList: Vec<Stmt> = {
+    <a: ArrayDecl> => vec![a],
+    <mut v: ArrayDeclList> COMMA <a: ArrayDecl> => { v.push(a); v },
+};
+
+ArrayDecl: Stmt = {
+    <id: Ident> LPAREN <dims: DimList> RPAREN => {
+        // placeholder: we cannot construct ArrayDecl directly without TypeSpec here
+        // return a VarDecl with empty names to be rewritten later in sema
+        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![id] }
+    }
+};
+
+DimList: Vec<Expr> = {
+    <e: RhsExpr> => vec![e],
+    <mut v: DimList> COMMA <e: RhsExpr> => { v.push(e); v },
 };
 
 CaseBlocks: Vec<CaseOrDefault> = {
@@ -303,4 +336,4 @@ CaseItem: CaseItem = {
     <e: RhsExpr> => CaseItem::Single(e),
 };
 
-PreFuncDecl: Stmt = { <t: TypeSpec> DCOLON <names: IdentList> => Stmt::VarDecl { kind: t, names } };
+PreFuncDecl: Stmt = { <t: TypeSpec> <_attrs: AttrList> DCOLON <names: IdentList> => Stmt::VarDecl { kind: t, names } };

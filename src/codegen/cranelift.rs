@@ -270,6 +270,34 @@ fn eval_expr(
                 CgVal::I64(b.ins().iconst(ir::types::I64, 0))
             }
         }
+        IExpr::Index(name, args) => {
+            // simple fallback: evaluate first index and load from corresponding
+            // single-dimension stack slot if present. This is a placeholder so
+            // lowering can emit Index nodes and codegen will still compile.
+            if args.is_empty() {
+                CgVal::I64(b.ins().iconst(ir::types::I64, 0))
+            } else {
+                // evaluate first index
+                let idx = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                // if base is an int array stored in 'ints', try to load
+                // compute (idx-1) and multiply by element size (8)
+                let one = b.ins().iconst(ir::types::I64, 1);
+                let idx_i = to_i64(b, idx);
+                let adj = b.ins().isub(idx_i, one);
+                let off = b.ins().imul_imm(adj, 8);
+                if let Some(ss) = ints.get(name.as_str()) {
+                    let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                    let addr = b.ins().iadd(a, off);
+                    CgVal::I64(b.ins().load(ir::types::I64, MemFlags::new(), addr, 0))
+                } else if let Some(ss) = reals.get(name.as_str()) {
+                    let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                    let addr = b.ins().iadd(a, off);
+                    CgVal::F64(b.ins().load(ir::types::F64, MemFlags::new(), addr, 0))
+                } else {
+                    CgVal::I64(b.ins().iconst(ir::types::I64, 0))
+                }
+            }
+        }
         IExpr::Un(op, e1) => {
             let v = eval_expr(b, ex, ptr_ty, e1, ints, reals, bools, func_meta);
             match op {
@@ -552,6 +580,7 @@ fn print_expr(
     real_kind: &HashMap<String, bool>,
     i128_last: &HashMap<String, String>,
     func_meta: &HashMap<String, FuncMeta>,
+    arrays: &HashMap<String, usize>,
     e: &IExpr,
 ) -> Result<()> {
     use ir::condcodes::FloatCC;
@@ -620,6 +649,23 @@ fn print_expr(
                 let gv = module.declare_data_in_func(idd, b.func);
                 let p = b.ins().global_value(ptr_ty, gv);
                 b.ins().call(ex.printf, &[ex.fmt_s, p]);
+            } else if let Some(len) = arrays.get(id) {
+                // whole-array print for integer array
+                if let Some(ss) = ints.get(id) {
+                    for i in 0..*len {
+                        let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                        let addr = b.ins().iadd_imm(a, (i as i64) * 8);
+                        let v = b.ins().load(ir::types::I64, MemFlags::new(), addr, 0);
+                        let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
+                        b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                        if i + 1 < *len {
+                            // print space separator
+                            let sp = make_data(module, b, ptr_ty, &mut 0u32, b" ")?;
+                            b.ins().call(ex.printf, &[ex.fmt_s, sp]);
+                        }
+                    }
+                    return Ok(());
+                }
             } else if let Some(ss) = ints.get(id) {
                 let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                 let v = b.ins().load(types::I64, MemFlags::new(), a, 0);
@@ -669,6 +715,55 @@ fn print_expr(
                 let z = b.ins().iconst(types::I64, 0);
                 let p = int_to_str(b, ex, ptr_ty, ex.sprintf, z);
                 b.ins().call(ex.printf, &[ex.fmt_s, p]);
+            }
+        }
+        IExpr::Index(_name, args) => {
+            // Print the actual array element: evaluate first index and load
+            if args.is_empty() {
+                b.ins().call(ex.printf, &[ex.fmt_s, ex.p_nl]);
+            } else {
+                let idxv = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                let one = b.ins().iconst(ir::types::I64, 1);
+                let idx_i = to_i64(b, idxv);
+                let adj = b.ins().isub(idx_i, one);
+                let off = b.ins().imul_imm(adj, 8);
+                if let IExpr::Index(name, _) = e {
+                    if let Some(ss) = ints.get(name.as_str()) {
+                        let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                        let addr = b.ins().iadd(a, off);
+                        let v = b.ins().load(ir::types::I64, MemFlags::new(), addr, 0);
+                        let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
+                        b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    } else if let Some(ss) = reals.get(name.as_str()) {
+                        let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                        let addr = b.ins().iadd(a, off);
+                        let fv = b.ins().load(ir::types::F64, MemFlags::new(), addr, 0);
+                        let trunc = b.ins().fcvt_to_sint(ir::types::I64, fv);
+                        let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
+                            ir::StackSlotKind::ExplicitSlot,
+                            64,
+                            0,
+                        ));
+                        let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
+                        b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+                        let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
+                            ir::StackSlotKind::ExplicitSlot,
+                            64,
+                            0,
+                        ));
+                        let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
+                        let nd = b.ins().iconst(ir::types::I32, 6);
+                        b.ins().call(ex.gcvt, &[fv, nd, p_f]);
+                        let converted = b.ins().fcvt_from_sint(ir::types::F64, trunc);
+                        let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, fv, converted);
+                        let p_sel = b.ins().select(cmp, p_int, p_f);
+                        b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+                    } else {
+                        let z = b.ins().iconst(ir::types::I64, 0);
+                        let p = int_to_str(b, ex, ptr_ty, ex.sprintf, z);
+                        b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    }
+                }
             }
         }
         IExpr::Bin(op, l, r) => {
@@ -1208,6 +1303,7 @@ fn gen_stmts(
     current_fn: Option<&str>,
     current_loop_after: Option<ir::Block>,
     current_loop_continue: Option<ir::Block>,
+    arrays: &mut HashMap<String, usize>,
 ) -> Result<bool> {
     use ir::{types, MemFlags};
     for st in stmts {
@@ -1216,12 +1312,12 @@ fn gen_stmts(
                 for e in items.iter() {
                     print_expr(
                         b, ex, ptr_ty, module, dc, ints, reals, bools, chars, real_kind, i128_last,
-                        func_meta, e,
+                        func_meta, arrays, e,
                     )?;
                 }
                 b.ins().call(ex.printf, &[ex.fmt_s, ex.p_nl]);
             }
-            IStmt::DeclVar(kind, name) => {
+            IStmt::DeclVar(kind, name, dims) => {
                 if ints.contains_key(name)
                     || reals.contains_key(name)
                     || bools.contains_key(name)
@@ -1236,6 +1332,25 @@ fn gen_stmts(
                         i128_last.insert(name.clone(), "0".into());
                     }
                     crate::ast::TypeSpec::Integer(_) => {
+                        // if dims provided and single integer literal, allocate full array
+                        if dims.len() == 1 {
+                            if let IExpr::IntLit(s) = &dims[0] {
+                                if let Ok(len128) = i128::from_str_radix(s, 10) {
+                                    let len = usize::try_from(len128).unwrap_or(0);
+                                    if len > 0 {
+                                        let size = (len as u32) * 8u32;
+                                        let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
+                                            ir::StackSlotKind::ExplicitSlot,
+                                            size,
+                                            0,
+                                        ));
+                                        ints.insert(name.clone(), ss);
+                                        arrays.insert(name.clone(), len);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             8,
@@ -1244,6 +1359,25 @@ fn gen_stmts(
                         ints.insert(name.clone(), ss);
                     }
                     crate::ast::TypeSpec::Real => {
+                        if dims.len() == 1 {
+                            if let IExpr::IntLit(s) = &dims[0] {
+                                if let Ok(len128) = i128::from_str_radix(s, 10) {
+                                    let len = usize::try_from(len128).unwrap_or(0);
+                                    if len > 0 {
+                                        let size = (len as u32) * 8u32;
+                                        let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
+                                            ir::StackSlotKind::ExplicitSlot,
+                                            size,
+                                            0,
+                                        ));
+                                        reals.insert(name.clone(), ss);
+                                        real_kind.insert(name.clone(), false);
+                                        arrays.insert(name.clone(), len);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             8,
@@ -1253,6 +1387,25 @@ fn gen_stmts(
                         real_kind.insert(name.clone(), false);
                     }
                     crate::ast::TypeSpec::DoublePrecision => {
+                        if dims.len() == 1 {
+                            if let IExpr::IntLit(s) = &dims[0] {
+                                if let Ok(len128) = i128::from_str_radix(s, 10) {
+                                    let len = usize::try_from(len128).unwrap_or(0);
+                                    if len > 0 {
+                                        let size = (len as u32) * 8u32;
+                                        let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
+                                            ir::StackSlotKind::ExplicitSlot,
+                                            size,
+                                            0,
+                                        ));
+                                        reals.insert(name.clone(), ss);
+                                        real_kind.insert(name.clone(), true);
+                                        arrays.insert(name.clone(), len);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             8,
@@ -1339,6 +1492,34 @@ fn gen_stmts(
                     let zero = b.ins().iconst(ir::types::I8, 0);
                     let as8 = b.ins().select(bv, one, zero);
                     b.ins().store(MemFlags::new(), as8, a, 0);
+                }
+            }
+            IStmt::AssignIndex(name, inds, val) => {
+                // evaluate first index only for now
+                if inds.is_empty() {
+                    continue;
+                }
+                let idxv = eval_expr(b, ex, ptr_ty, &inds[0], ints, reals, bools, func_meta);
+                // compute offset = (idx-1) * element_size
+                let idx_i = to_i64(b, idxv);
+                let one = b.ins().iconst(ir::types::I64, 1);
+                let _zero = b.ins().iconst(ir::types::I64, 0);
+                let adj = b.ins().isub(idx_i, one);
+                // integer element size = 8, real f64 size = 8
+                let off = b.ins().imul_imm(adj, 8);
+                // store value depending on base array type (int or real)
+                if let Some(ss) = ints.get(name) {
+                    let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                    let v = eval_expr(b, ex, ptr_ty, val, ints, reals, bools, func_meta);
+                    let iv = to_i64(b, v);
+                    let addr = b.ins().iadd(a, off);
+                    b.ins().store(MemFlags::new(), iv, addr, 0);
+                } else if let Some(ss) = reals.get(name) {
+                    let a = b.ins().stack_addr(ptr_ty, *ss, 0);
+                    let v = eval_expr(b, ex, ptr_ty, val, ints, reals, bools, func_meta);
+                    let fv = to_f64(b, v);
+                    let addr = b.ins().iadd(a, off);
+                    b.ins().store(MemFlags::new(), fv, addr, 0);
                 }
             }
             IStmt::AssignIdent(dst, src) => {
@@ -1438,8 +1619,24 @@ fn gen_stmts(
                 b.seal_block(else_blk);
                 b.switch_to_block(then_blk);
                 let tr = gen_stmts(
-                    b, ex, ptr_ty, module, dc, then_body, ints, reals, bools, chars, real_kind,
-                    i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue,
+                    b,
+                    ex,
+                    ptr_ty,
+                    module,
+                    dc,
+                    then_body,
+                    ints,
+                    reals,
+                    bools,
+                    chars,
+                    real_kind,
+                    i128_vars,
+                    i128_last,
+                    func_meta,
+                    current_fn,
+                    current_loop_after,
+                    current_loop_continue,
+                    arrays,
                 )?;
                 if tr {
                     return Ok(true);
@@ -1448,8 +1645,24 @@ fn gen_stmts(
                 b.switch_to_block(else_blk);
                 if let Some(eb) = else_body {
                     let er = gen_stmts(
-                        b, ex, ptr_ty, module, dc, eb, ints, reals, bools, chars, real_kind,
-                        i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue,
+                        b,
+                        ex,
+                        ptr_ty,
+                        module,
+                        dc,
+                        eb,
+                        ints,
+                        reals,
+                        bools,
+                        chars,
+                        real_kind,
+                        i128_vars,
+                        i128_last,
+                        func_meta,
+                        current_fn,
+                        current_loop_after,
+                        current_loop_continue,
+                        arrays,
                     )?;
                     if er {
                         return Ok(true);
@@ -1461,8 +1674,24 @@ fn gen_stmts(
             }
             IStmt::Block { body } => {
                 let r = gen_stmts(
-                    b, ex, ptr_ty, module, dc, &body, ints, reals, bools, chars, real_kind,
-                    i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue,
+                    b,
+                    ex,
+                    ptr_ty,
+                    module,
+                    dc,
+                    &body,
+                    ints,
+                    reals,
+                    bools,
+                    chars,
+                    real_kind,
+                    i128_vars,
+                    i128_last,
+                    func_meta,
+                    current_fn,
+                    current_loop_after,
+                    current_loop_continue,
+                    arrays,
                 )?;
                 if r {
                     return Ok(true);
@@ -1523,9 +1752,24 @@ fn gen_stmts(
                     b.switch_to_block(body_blk);
                     b.seal_block(body_blk);
                     let tr = gen_stmts(
-                        b, ex, ptr_ty, module, dc, &body, ints, reals, bools, chars, real_kind,
-                        i128_vars, i128_last, func_meta, current_fn,
-                        Some(after_blk), Some(continue_blk),
+                        b,
+                        ex,
+                        ptr_ty,
+                        module,
+                        dc,
+                        &body,
+                        ints,
+                        reals,
+                        bools,
+                        chars,
+                        real_kind,
+                        i128_vars,
+                        i128_last,
+                        func_meta,
+                        current_fn,
+                        Some(after_blk),
+                        Some(continue_blk),
+                        arrays,
                     )?;
                     if tr {
                         return Ok(true);
@@ -1563,11 +1807,26 @@ fn gen_stmts(
                 b.seal_block(after_blk);
                 b.switch_to_block(body_blk);
                 b.seal_block(body_blk);
-                    let er = gen_stmts(
-                        b, ex, ptr_ty, module, dc, &body, ints, reals, bools, chars, real_kind,
-                        i128_vars, i128_last, func_meta, current_fn,
-                        Some(after_blk), Some(loop_blk),
-                    )?;
+                let er = gen_stmts(
+                    b,
+                    ex,
+                    ptr_ty,
+                    module,
+                    dc,
+                    &body,
+                    ints,
+                    reals,
+                    bools,
+                    chars,
+                    real_kind,
+                    i128_vars,
+                    i128_last,
+                    func_meta,
+                    current_fn,
+                    Some(after_blk),
+                    Some(loop_blk),
+                    arrays,
+                )?;
                 if er {
                     return Ok(true);
                 }
@@ -1904,6 +2163,7 @@ fn gen_stmts(
                         current_fn,
                         None,
                         None,
+                        arrays,
                     )?;
                     if tr {
                         return Ok(true);
@@ -1917,23 +2177,8 @@ fn gen_stmts(
                     b.switch_to_block(def_blk);
                     if let Some(dbody) = default {
                         let tr = gen_stmts(
-                            b,
-                            ex,
-                            ptr_ty,
-                            module,
-                            dc,
-                            dbody,
-                            ints,
-                            reals,
-                            bools,
-                            chars,
-                            real_kind,
-                            i128_vars,
-                            i128_last,
-                            func_meta,
-                            current_fn,
-                            None,
-                            None,
+                            b, ex, ptr_ty, module, dc, dbody, ints, reals, bools, chars, real_kind,
+                            i128_vars, i128_last, func_meta, current_fn, None, None, arrays,
                         )?;
                         if tr {
                             return Ok(true);
@@ -1978,7 +2223,7 @@ impl Backend for CraneliftBackend {
             let mut rt = f.return_type.clone();
             if rt.is_none() {
                 for st in &f.body {
-                    if let IStmt::DeclVar(ts, n) = st {
+                    if let IStmt::DeclVar(ts, n, _) = st {
                         if n == &f.name {
                             rt = Some(ts.clone());
                             break;
@@ -1993,7 +2238,7 @@ impl Backend for CraneliftBackend {
             for pname in &f.params {
                 let mut found = None;
                 for st in &f.body {
-                    if let IStmt::DeclVar(ts, n) = st {
+                    if let IStmt::DeclVar(ts, n, _) = st {
                         if n == pname {
                             found = Some(ts.clone());
                             break;
@@ -2291,6 +2536,7 @@ impl Backend for CraneliftBackend {
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
                 let mut dc = 0u32;
+                let _arrays: HashMap<String, usize> = HashMap::new();
                 let mut func_meta: HashMap<String, FuncMeta> = HashMap::new();
                 for (name, fid) in &func_ids {
                     let fr = obj.declare_func_in_func(*fid, b.func);
@@ -2370,6 +2616,7 @@ impl Backend for CraneliftBackend {
                     }
                     TypeSpec::Character(_) => None,
                 };
+                let mut arrays: HashMap<String, usize> = HashMap::new();
                 let did_ret = gen_stmts(
                     &mut b,
                     &ex,
@@ -2388,6 +2635,7 @@ impl Backend for CraneliftBackend {
                     Some(&f.name),
                     None,
                     None,
+                    &mut arrays,
                 )?;
                 if !did_ret {
                     if let Some(rs) = ret_slot {
@@ -2463,7 +2711,8 @@ impl Backend for CraneliftBackend {
                         },
                     );
                 }
-                let _ = gen_stmts(
+                let mut arrays: HashMap<String, usize> = HashMap::new();
+                let _tr = gen_stmts(
                     &mut b,
                     &ex,
                     ptr_ty,
@@ -2481,6 +2730,7 @@ impl Backend for CraneliftBackend {
                     None,
                     None,
                     None,
+                    &mut arrays,
                 )?;
                 let z = b.ins().iconst(types::I32, 0);
                 b.ins().return_(&[z]);

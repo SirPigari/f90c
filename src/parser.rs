@@ -4,8 +4,12 @@ use crate::ast::Program;
 use crate::errors::{CompileError, CompileErrorKind};
 use crate::lexer::{Token, TokenKind};
 
-use lalrpop_util::lalrpop_mod;
-lalrpop_mod!(pub fortran);
+// Include the generated parser with localized allows to silence warnings
+// emitted from the generated code (unused variables, dead code, etc.).
+#[allow(unused_variables, dead_code)]
+pub mod fortran {
+    include!(concat!(env!("OUT_DIR"), "/fortran.rs"));
+}
 
 fn human_expected(name: &str) -> String {
     match name {
@@ -78,7 +82,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::LParen => "'('".into(),
         TokenKind::RParen => "')'".into(),
         TokenKind::DColon => "'::'".into(),
-    TokenKind::Colon => "':'".into(),
+        TokenKind::Colon => "':'".into(),
         TokenKind::Eq => "'='".into(),
         TokenKind::Plus => "'+'".into(),
         TokenKind::Minus => "'-'".into(),

@@ -5,3 +5,4 @@
 Cargo.lock
 src/fortran.rs
 tests/expectations.json
+./test.f90

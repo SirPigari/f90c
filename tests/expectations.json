@@ -151,6 +151,14 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "1\r\n2\r\n3\r\n5\r\n8\r\n13\r\n21\r\n34\r\n55\r\n89\r\n144\r\n"
+    },
+    "20_arrays": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "compiler_stdout": "Wrote object: tests\\20_arrays.obj\n[link] reading object file tests\\20_arrays.obj\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked tests/tmp_test.exe\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [10240 BYTES, 10.00 KB]\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "2 4 6 8 10\r\na1: 2\r\na5: 10\r\nsum: 30\r\n"
     }
   }
 }

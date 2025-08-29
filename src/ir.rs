@@ -20,6 +20,7 @@ pub enum IExpr {
     RealLit(String),
     Logical(bool),
     Ident(String),
+    Index(String, Vec<IExpr>),
     Bin(crate::ast::BinOp, Box<IExpr>, Box<IExpr>),
     Un(crate::ast::UnOp, Box<IExpr>),
     Call(String, Vec<IExpr>),
@@ -28,13 +29,16 @@ pub enum IExpr {
 #[derive(Debug, Clone)]
 pub enum IStmt {
     Print(Vec<IExpr>),
-    DeclVar(crate::ast::TypeSpec, String),
+    // DeclVar: type, name, optional dimensions (empty => scalar)
+    DeclVar(crate::ast::TypeSpec, String, Vec<IExpr>),
     AssignStr(String, String),
     AssignIntLit(String, String),
     AssignRealLit(String, String),
     AssignBool(String, bool),
     AssignIdent(String, String),
     AssignExpr(String, IExpr),
+    // assignment to array element: name, indices, value
+    AssignIndex(String, Vec<IExpr>, IExpr),
     Return(Option<IExpr>),
     If {
         cond: IExpr,
@@ -135,20 +139,43 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
             .all(|s| matches!(s, Stmt::Module { .. }));
     let has_program = program.name != "<anon>";
 
-    fn lower_expr(e: &Expr) -> IExpr {
+    // types: a map of known variable names -> their TypeSpec. If an Expr::Call
+    // references a name present in `types`, we treat it as an index expression
+    // (e.g. a(i)) rather than a function call.
+    fn lower_expr(
+        e: &Expr,
+        types: &std::collections::HashMap<String, crate::ast::TypeSpec>,
+    ) -> IExpr {
         match e {
             Expr::Str(s) => IExpr::Str(s.clone()),
             Expr::IntLit(s) => IExpr::IntLit(s.clone()),
             Expr::RealLit(s) => IExpr::RealLit(s.clone()),
             Expr::Logical(b) => IExpr::Logical(*b),
             Expr::Ident(id) => IExpr::Ident(id.clone()),
-            Expr::Bin(op, l, r) => {
-                IExpr::Bin(op.clone(), Box::new(lower_expr(l)), Box::new(lower_expr(r)))
-            }
-            Expr::Un(op, e) => IExpr::Un(op.clone(), Box::new(lower_expr(e))),
+            Expr::Bin(op, l, r) => IExpr::Bin(
+                op.clone(),
+                Box::new(lower_expr(l, types)),
+                Box::new(lower_expr(r, types)),
+            ),
+            Expr::Un(op, e) => IExpr::Un(op.clone(), Box::new(lower_expr(e, types))),
             Expr::Call(name, args) => {
-                IExpr::Call(name.clone(), args.iter().map(lower_expr).collect())
+                // If the name is a declared variable, interpret as an index.
+                if types.contains_key(name) {
+                    IExpr::Index(
+                        name.clone(),
+                        args.iter().map(|a| lower_expr(a, types)).collect(),
+                    )
+                } else {
+                    IExpr::Call(
+                        name.clone(),
+                        args.iter().map(|a| lower_expr(a, types)).collect(),
+                    )
+                }
             }
+            Expr::Index(name, args) => IExpr::Index(
+                name.clone(),
+                args.iter().map(|a| lower_expr(a, types)).collect(),
+            ),
         }
     }
 
@@ -157,11 +184,12 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
         stmts: &[Stmt],
         collected: &mut Vec<Function>,
         external_ret: &std::collections::HashMap<String, crate::ast::TypeSpec>,
+        types: &mut std::collections::HashMap<String, crate::ast::TypeSpec>,
     ) {
         for s in stmts {
             match s {
                 Stmt::Print { items } => {
-                    let v = items.iter().map(lower_expr).collect();
+                    let v = items.iter().map(|i| lower_expr(i, types)).collect();
                     out.push(IStmt::Print(v));
                 }
                 Stmt::VarDecl { kind, names } => {
@@ -172,8 +200,12 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                         }
                     }
                     if !kept.is_empty() {
+                        for n in kept.iter() {
+                            // register declared variable into local types map
+                            types.insert(n.clone(), kind.clone());
+                        }
                         for n in kept {
-                            out.push(IStmt::DeclVar(kind.clone(), n));
+                            out.push(IStmt::DeclVar(kind.clone(), n, Vec::new()));
                         }
                     }
                 }
@@ -183,10 +215,34 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                     Expr::RealLit(s) => out.push(IStmt::AssignRealLit(name.clone(), s.clone())),
                     Expr::Logical(b) => out.push(IStmt::AssignBool(name.clone(), *b)),
                     Expr::Ident(id) => out.push(IStmt::AssignIdent(name.clone(), id.clone())),
-                    _ => out.push(IStmt::AssignExpr(name.clone(), lower_expr(value))),
+                    _ => out.push(IStmt::AssignExpr(name.clone(), lower_expr(value, types))),
                 },
+                Stmt::AssignIndex {
+                    name,
+                    indices,
+                    value,
+                } => {
+                    let mut idxs: Vec<IExpr> = Vec::new();
+                    for a in indices {
+                        idxs.push(lower_expr(a, types));
+                    }
+                    out.push(IStmt::AssignIndex(
+                        name.clone(),
+                        idxs,
+                        lower_expr(value, types),
+                    ));
+                }
+                Stmt::ArrayDecl { kind, name, dims } => {
+                    // lower dims to IExpr and register declared array in types
+                    let mut idxs: Vec<IExpr> = Vec::new();
+                    for d in dims {
+                        idxs.push(lower_expr(d, types));
+                    }
+                    types.insert(name.clone(), kind.clone());
+                    out.push(IStmt::DeclVar(kind.clone(), name.clone(), idxs));
+                }
                 Stmt::Return(opt) => {
-                    out.push(IStmt::Return(opt.as_ref().map(lower_expr)));
+                    out.push(IStmt::Return(opt.as_ref().map(|o| lower_expr(o, types))));
                 }
                 Stmt::If {
                     cond,
@@ -194,14 +250,23 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                     else_body,
                 } => {
                     let mut then_ir = Vec::new();
-                    lower_stmts(&mut then_ir, then_body, collected, external_ret);
+                    // child scope: clone current types map so inner declarations don't leak
+                    let mut child_types = types.clone();
+                    lower_stmts(
+                        &mut then_ir,
+                        then_body,
+                        collected,
+                        external_ret,
+                        &mut child_types,
+                    );
                     let else_ir = else_body.as_ref().map(|eb| {
                         let mut v = Vec::new();
-                        lower_stmts(&mut v, eb, collected, external_ret);
+                        let mut child_types = types.clone();
+                        lower_stmts(&mut v, eb, collected, external_ret, &mut child_types);
                         v
                     });
                     out.push(IStmt::If {
-                        cond: lower_expr(cond),
+                        cond: lower_expr(cond, types),
                         then_body: then_ir,
                         else_body: else_ir,
                     });
@@ -213,11 +278,20 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                     body,
                 } => {
                     let mut body_ir = Vec::new();
-                    lower_stmts(&mut body_ir, body, collected, external_ret);
+                    // loop introduces its loop variable as integer in a child scope
+                    let mut child_types = types.clone();
+                    child_types.insert(var.clone(), crate::ast::TypeSpec::Integer(None));
+                    lower_stmts(
+                        &mut body_ir,
+                        body,
+                        collected,
+                        external_ret,
+                        &mut child_types,
+                    );
                     out.push(IStmt::Do {
                         var: var.clone(),
-                        start: lower_expr(start),
-                        end: lower_expr(end),
+                        start: lower_expr(start, types),
+                        end: lower_expr(end, types),
                         body: body_ir,
                     });
                 }
@@ -228,12 +302,15 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                     body,
                 } => {
                     let mut f_body: Vec<IStmt> = Vec::new();
-                    lower_stmts(&mut f_body, body, collected, external_ret);
+                    // new types map for the function body
+                    let mut fn_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
+                        std::collections::HashMap::new();
+                    lower_stmts(&mut f_body, body, collected, external_ret, &mut fn_types);
                     if !params.is_empty() {
                         let param_set: std::collections::HashSet<_> =
                             params.iter().cloned().collect();
                         f_body.retain(|st| match st {
-                            IStmt::DeclVar(_, var) if param_set.contains(var) => false,
+                            IStmt::DeclVar(_, var, _) if param_set.contains(var) => false,
                             _ => true,
                         });
                     }
@@ -251,7 +328,9 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                 }
                 Stmt::Subroutine { name, params, body } => {
                     let mut f_body: Vec<IStmt> = Vec::new();
-                    lower_stmts(&mut f_body, body, collected, external_ret);
+                    let mut fn_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
+                        std::collections::HashMap::new();
+                    lower_stmts(&mut f_body, body, collected, external_ret, &mut fn_types);
                     collected.push(Function {
                         name: name.clone(),
                         params: params.clone(),
@@ -262,18 +341,20 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                 Stmt::CallSub { name, args } => {
                     out.push(IStmt::Call(
                         name.clone(),
-                        args.iter().map(lower_expr).collect(),
+                        args.iter().map(|a| lower_expr(a, types)).collect(),
                     ));
                 }
                 Stmt::Read { args } => {
-                    out.push(IStmt::Read(args.iter().map(lower_expr).collect()));
+                    out.push(IStmt::Read(
+                        args.iter().map(|a| lower_expr(a, types)).collect(),
+                    ));
                 }
                 Stmt::SelectCase {
                     expr,
                     cases,
                     default,
                 } => {
-                    let selector = lower_expr(expr);
+                    let selector = lower_expr(expr, types);
                     let mut icases: Vec<IcCase> = Vec::new();
                     for cb in cases {
                         let mut items: Vec<IcCaseItem> = Vec::new();
@@ -284,14 +365,17 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                         for it in &cb.items {
                             match it {
                                 crate::ast::CaseItem::Single(e) => {
-                                    pending_singles.push(lower_expr(e));
+                                    pending_singles.push(lower_expr(e, types));
                                 }
                                 crate::ast::CaseItem::Range(l, r) => {
                                     if !pending_singles.is_empty() {
                                         items.push(IcCaseItem::Multi(pending_singles));
                                         pending_singles = Vec::new();
                                     }
-                                    items.push(IcCaseItem::Range(lower_expr(l), lower_expr(r)));
+                                    items.push(IcCaseItem::Range(
+                                        lower_expr(l, types),
+                                        lower_expr(r, types),
+                                    ));
                                 }
                             }
                         }
@@ -306,14 +390,22 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                             items,
                             body: {
                                 let mut b = Vec::new();
-                                lower_stmts(&mut b, &cb.body, collected, external_ret);
+                                let mut child_types = types.clone();
+                                lower_stmts(
+                                    &mut b,
+                                    &cb.body,
+                                    collected,
+                                    external_ret,
+                                    &mut child_types,
+                                );
                                 b
                             },
                         });
                     }
                     let default_ir = default.as_ref().map(|d| {
                         let mut v = Vec::new();
-                        lower_stmts(&mut v, d, collected, external_ret);
+                        let mut child_types = types.clone();
+                        lower_stmts(&mut v, d, collected, external_ret, &mut child_types);
                         v
                     });
                     out.push(IStmt::SelectCase {
@@ -336,12 +428,24 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                                 body,
                             } => {
                                 let mut f_body: Vec<IStmt> = Vec::new();
-                                lower_stmts(&mut f_body, body, collected, external_ret);
+                                let mut fn_types: std::collections::HashMap<
+                                    String,
+                                    crate::ast::TypeSpec,
+                                > = std::collections::HashMap::new();
+                                lower_stmts(
+                                    &mut f_body,
+                                    body,
+                                    collected,
+                                    external_ret,
+                                    &mut fn_types,
+                                );
                                 if !params.is_empty() {
                                     let param_set: std::collections::HashSet<_> =
                                         params.iter().cloned().collect();
                                     f_body.retain(|st| match st {
-                                        IStmt::DeclVar(_, var) if param_set.contains(var) => false,
+                                        IStmt::DeclVar(_, var, _) if param_set.contains(var) => {
+                                            false
+                                        }
                                         _ => true,
                                     });
                                 }
@@ -359,7 +463,17 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                             }
                             Stmt::Subroutine { name, params, body } => {
                                 let mut f_body: Vec<IStmt> = Vec::new();
-                                lower_stmts(&mut f_body, body, collected, external_ret);
+                                let mut fn_types: std::collections::HashMap<
+                                    String,
+                                    crate::ast::TypeSpec,
+                                > = std::collections::HashMap::new();
+                                lower_stmts(
+                                    &mut f_body,
+                                    body,
+                                    collected,
+                                    external_ret,
+                                    &mut fn_types,
+                                );
                                 collected.push(Function {
                                     name: name.clone(),
                                     params: params.clone(),
@@ -368,7 +482,15 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                                 });
                             }
                             _ => {
-                                lower_stmts(out, std::slice::from_ref(s), collected, external_ret);
+                                // use a child copy of types for module-level nested statements
+                                let mut child_types = types.clone();
+                                lower_stmts(
+                                    out,
+                                    std::slice::from_ref(s),
+                                    collected,
+                                    external_ret,
+                                    &mut child_types,
+                                );
                             }
                         }
                     }
@@ -376,13 +498,18 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                 Stmt::ImplicitNone => { /* no-op */ } // SelectCase already handled above; nothing to do here
                 Stmt::Block { body } => {
                     let mut b = Vec::new();
-                    lower_stmts(&mut b, body, collected, external_ret);
+                    let mut child_types = types.clone();
+                    lower_stmts(&mut b, body, collected, external_ret, &mut child_types);
                     out.push(IStmt::Block { body: b });
                 }
                 Stmt::DoWhile { cond, body } => {
                     let mut b = Vec::new();
-                    lower_stmts(&mut b, body, collected, external_ret);
-                    out.push(IStmt::DoWhile { cond: lower_expr(cond), body: b });
+                    let mut child_types = types.clone();
+                    lower_stmts(&mut b, body, collected, external_ret, &mut child_types);
+                    out.push(IStmt::DoWhile {
+                        cond: lower_expr(cond, types),
+                        body: b,
+                    });
                 }
                 Stmt::Exit => {
                     out.push(IStmt::Exit);
@@ -394,6 +521,9 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
         }
     }
 
+    // track top-level declared variable types while lowering
+    let mut top_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
+        std::collections::HashMap::new();
     for s in &program.body {
         if let Stmt::Function {
             name,
@@ -403,7 +533,10 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
         } = s
         {
             let mut f_body: Vec<IStmt> = Vec::new();
-            lower_stmts(&mut f_body, body, &mut funcs, &external_ret);
+            // function uses its own local type map
+            let mut fn_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
+                std::collections::HashMap::new();
+            lower_stmts(&mut f_body, body, &mut funcs, &external_ret, &mut fn_types);
             let eff_rt = if rt.is_none() {
                 external_ret.get(name).cloned()
             } else {
@@ -422,7 +555,9 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
             });
         } else if let Stmt::Subroutine { name, params, body } = s {
             let mut f_body: Vec<IStmt> = Vec::new();
-            lower_stmts(&mut f_body, body, &mut funcs, &external_ret);
+            let mut fn_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
+                std::collections::HashMap::new();
+            lower_stmts(&mut f_body, body, &mut funcs, &external_ret, &mut fn_types);
             let subr_name = if is_library && name == "main" {
                 "__f90c_init".to_string()
             } else {
@@ -437,7 +572,11 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
         } else if let Stmt::VarDecl { kind, names } = s {
             for n in names {
                 if !external_ret.contains_key(n) {
-                    current.body.push(IStmt::DeclVar(kind.clone(), n.clone()));
+                    // record top-level var decl
+                    top_types.insert(n.clone(), kind.clone());
+                    current
+                        .body
+                        .push(IStmt::DeclVar(kind.clone(), n.clone(), Vec::new()));
                 }
             }
         } else {
@@ -446,6 +585,7 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                 std::slice::from_ref(s),
                 &mut funcs,
                 &external_ret,
+                &mut top_types,
             );
         }
     }

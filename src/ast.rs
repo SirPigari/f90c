@@ -23,8 +23,20 @@ pub enum Stmt {
         kind: TypeSpec,
         names: Vec<String>,
     },
+    // explicit array declaration with dimensions, e.g. `integer :: a(5)`
+    ArrayDecl {
+        kind: TypeSpec,
+        name: String,
+        dims: Vec<Expr>,
+    },
     Assign {
         name: String,
+        value: Expr,
+    },
+    // assignment to array element: a(1) = expr
+    AssignIndex {
+        name: String,
+        indices: Vec<Expr>,
         value: Expr,
     },
     If {
@@ -132,6 +144,9 @@ pub enum Expr {
     RealLit(String),
     Logical(bool),
     Ident(String),
+    // indexing: a(1) or mat(i,j)
+    #[allow(dead_code)]
+    Index(String, Vec<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
     Un(UnOp, Box<Expr>),
     Call(String, Vec<Expr>),

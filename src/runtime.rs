@@ -93,18 +93,44 @@ pub fn interpret(program: &Program) {
             Expr::Str(s) => ValueTuple::from_str(s.clone()),
             Expr::Ident(id) => {
                 if let Some(v) = env_int.get(id) {
-                    ValueTuple::from_int(*v)
+                    return ValueTuple::from_int(*v);
                 } else if let Some(v) = env_real64.get(id) {
-                    ValueTuple::from_real(*v)
+                    return ValueTuple::from_real(*v);
                 } else if let Some(v) = env_real32.get(id) {
-                    ValueTuple::from_real(*v as f64)
+                    return ValueTuple::from_real(*v as f64);
                 } else if let Some(v) = env_log.get(id) {
-                    ValueTuple::from_bool(*v)
+                    return ValueTuple::from_bool(*v);
                 } else if let Some(v) = env_str.get(id) {
-                    ValueTuple::from_str(v.clone())
+                    return ValueTuple::from_str(v.clone());
                 } else {
-                    ValueTuple::from_int(0)
+                    return ValueTuple::from_int(0);
                 }
+            }
+            Expr::Index(name, inds) => {
+                // single-dimension access only for now
+                let mut idx = 0usize;
+                if let Some(first) = inds.get(0) {
+                    let vt = eval_expr(
+                        first, env_str, env_int, env_real32, env_real64, env_log, funcs, call_stack,
+                    );
+                    if let Some(i) = vt.0 {
+                        idx = (i - 1) as usize;
+                    }
+                }
+                // look up in top frame arrays
+                if let Some(fr) = call_stack.last() {
+                    if let Some(vec) = fr.env_int_arrays.get(name) {
+                        if idx < vec.len() {
+                            return ValueTuple::from_int(vec[idx]);
+                        }
+                    }
+                    if let Some(vec) = fr.env_real_arrays.get(name) {
+                        if idx < vec.len() {
+                            return ValueTuple::from_real(vec[idx]);
+                        }
+                    }
+                }
+                ValueTuple::from_int(0)
             }
             Expr::Un(UnOp::Neg, inner) => {
                 let vt = eval_expr(
@@ -574,6 +600,9 @@ pub fn interpret(program: &Program) {
         env_real32: HashMap<String, f32>,
         env_real64: HashMap<String, f64>,
         env_log: HashMap<String, bool>,
+        // simple one-dimensional arrays stored as vectors; indexed 1-based
+        env_int_arrays: HashMap<String, Vec<i64>>,
+        env_real_arrays: HashMap<String, Vec<f64>>,
         func_name: Option<String>,
         is_function: bool,
     }
@@ -585,6 +614,9 @@ pub fn interpret(program: &Program) {
                 env_real32: HashMap::new(),
                 env_real64: HashMap::new(),
                 env_log: HashMap::new(),
+                // initialize simple array maps
+                env_int_arrays: HashMap::new(),
+                env_real_arrays: HashMap::new(),
                 func_name,
                 is_function: fd.is_function,
             }
@@ -595,7 +627,7 @@ pub fn interpret(program: &Program) {
         funcs: &HashMap<String, FuncDef>,
         call_stack: &mut Vec<CallFrame>,
     ) -> Option<ValueTuple> {
-        let mut idx = 0;
+        let mut idx: usize = 0;
         while idx < stmts.len() {
             let stmt = &stmts[idx];
             match stmt {
@@ -625,6 +657,26 @@ pub fn interpret(program: &Program) {
                             }
                             TypeSpec::Logical => {
                                 frame.env_log.entry(n.clone()).or_insert(false);
+                            }
+                        }
+                    }
+                }
+                Stmt::ArrayDecl { kind, name, dims } => {
+                    let fr = call_stack.last_mut().unwrap();
+                    // currently support single-dimension integer literal
+                    if dims.len() >= 1 {
+                        if let Expr::IntLit(s) = &dims[0] {
+                            if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
+                                let len = usize::try_from(v128).unwrap_or(0);
+                                match kind {
+                                    TypeSpec::Integer(_) => {
+                                        fr.env_int_arrays.insert(name.clone(), vec![0; len]);
+                                    }
+                                    TypeSpec::Real | TypeSpec::DoublePrecision => {
+                                        fr.env_real_arrays.insert(name.clone(), vec![0.0; len]);
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
                     }
@@ -784,27 +836,26 @@ pub fn interpret(program: &Program) {
                         }
                     }
                 }
-                Stmt::DoWhile { cond, body } => {
-                    loop {
-                        let (strs, ints, r32, r64, logs) = {
-                            let fr = call_stack.last().unwrap();
-                            (
-                                fr.env_str.clone(),
-                                fr.env_int.clone(),
-                                fr.env_real32.clone(),
-                                fr.env_real64.clone(),
-                                fr.env_log.clone(),
-                            )
-                        };
-                        let cond_val = eval_logical(cond, &logs, &ints, &r64, &r32, &strs, funcs, call_stack);
-                        if !cond_val {
-                            break;
-                        }
-                        if let Some(ret) = exec_stmts(body, funcs, call_stack) {
-                            return Some(ret);
-                        }
+                Stmt::DoWhile { cond, body } => loop {
+                    let (strs, ints, r32, r64, logs) = {
+                        let fr = call_stack.last().unwrap();
+                        (
+                            fr.env_str.clone(),
+                            fr.env_int.clone(),
+                            fr.env_real32.clone(),
+                            fr.env_real64.clone(),
+                            fr.env_log.clone(),
+                        )
+                    };
+                    let cond_val =
+                        eval_logical(cond, &logs, &ints, &r64, &r32, &strs, funcs, call_stack);
+                    if !cond_val {
+                        break;
                     }
-                }
+                    if let Some(ret) = exec_stmts(body, funcs, call_stack) {
+                        return Some(ret);
+                    }
+                },
                 Stmt::Do {
                     var,
                     start,
@@ -1075,6 +1126,52 @@ pub fn interpret(program: &Program) {
                         }
                     }
                 }
+                Stmt::AssignIndex {
+                    name,
+                    indices,
+                    value,
+                } => {
+                    let (strs, ints, r32, r64, logs) = {
+                        let fr = call_stack.last().unwrap();
+                        (
+                            fr.env_str.clone(),
+                            fr.env_int.clone(),
+                            fr.env_real32.clone(),
+                            fr.env_real64.clone(),
+                            fr.env_log.clone(),
+                        )
+                    };
+                    let vt = eval_expr(value, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
+                    // evaluate first index only for now and store element
+                    let mut idx0 = 0usize;
+                    if let Some(first) = indices.get(0) {
+                        let vti =
+                            eval_expr(first, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
+                        if let Some(i) = vti.0 {
+                            idx0 = (i - 1) as usize;
+                        }
+                    }
+                    let frame = call_stack.last_mut().unwrap();
+                    if let Some(i) = vt.0 {
+                        let vec = frame
+                            .env_int_arrays
+                            .entry(name.clone())
+                            .or_insert_with(Vec::new);
+                        if idx0 >= vec.len() {
+                            vec.resize(idx0 + 1, 0);
+                        }
+                        vec[idx0] = i;
+                    } else if let Some(f) = vt.1 {
+                        let vec = frame
+                            .env_real_arrays
+                            .entry(name.clone())
+                            .or_insert_with(Vec::new);
+                        if idx0 >= vec.len() {
+                            vec.resize(idx0 + 1, 0.0);
+                        }
+                        vec[idx0] = f;
+                    }
+                } // no-op for other statement variants
             }
             idx += 1;
         }
@@ -1086,6 +1183,8 @@ pub fn interpret(program: &Program) {
         env_real32,
         env_real64,
         env_log,
+        env_int_arrays: HashMap::new(),
+        env_real_arrays: HashMap::new(),
         func_name: None,
         is_function: false,
     };

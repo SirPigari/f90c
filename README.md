@@ -1,97 +1,177 @@
-# f90c — Single Executable Fortran 90 Compiler in Rust
+# f90c - Single Executable Fortran 90 Compiler in Rust
 
-`f90c` is a single executable Fortran 90 compiler written in Rust.  
-It lets you parse, check, compile, and run `.f90` programs all in one binary.
-
-Prebuilt single-file executables for Windows are available in the [GitHub releases](https://github.com/SirPigari/f90c/releases).  
-If you want, you can also build `f90c` yourself with Cargo.
+`f90c` is a single executable Fortran 90 compiler written in Rust. It can compile, link, and run Fortran 90 sources, supporting object files, optimizations, warnings, and multiple subcommands.
 
 ---
 
-## Quick Start (Windows / PowerShell)
+## Installation
 
-1. **Run a prebuilt executable**  
-
-   ```powershell
-   # Run semantic checks
-   f90c.exe check ./tests/01_basic_returns.f90
-
-   # Build and run an executable
-   f90c.exe build ./tests/10_subroutine_and_args.f90 -o ./tests/tmp_test
-
-   # Compile to an object file
-   f90c.exe emit-obj ./tests/03_real_double.f90 ./tests/03_real_double.obj
-
-   # Run a program directly
-   f90c.exe run ./tests/01_basic_returns.f90
-   ```
-
-2. **Using `USE` with precompiled objects**  
-
-   If your program uses a module compiled to an object file, pass the object first, followed by your main file:  
-
-   ```powershell
-   f90c.exe lib.obj main.f90
-   ```
-
-3. **Optional: Build from source**  
-
-   ```powershell
-   cargo build
-   # The compiled binary will be at target/debug/f90c
-   ```
+Download the precompiled binary from the [GitHub releases page](https://github.com/yourusername/f90c/releases) and place it in a directory included in your `PATH`.  
 
 ---
 
-## CLI Overview
+## Usage
 
-```
-check <file>           Run semantic checks and print diagnostics
-build <file>           Compile, emit object, and link to executable
-emit-obj <in> <out>    Emit compiled object file
-lex <file>             Print lexer tokens (debug)
-parse <file>           Print parsed AST (debug)
-link <files...>        Link sources or prebuilt objects
+The general command structure is:
+
+```bash
+f90c [subcommand] [links.o (.obj)] [inputs.f90] [options]
 ```
 
-**Warning control:**
+If no subcommand is provided, all `.f90` inputs are compiled into `.o` (`.obj`) object files. It does **not** run the executable.
 
+---
+
+## Quick Reference
+
+| Subcommand | Description |
+|------------|-------------|
+| `lex` | Dump tokens of a `.f90` source file |
+| `parse` | Dump AST of a `.f90` source file |
+| `check` | Run semantic checks only |
+| `build` | Compile a `.f90` source into a `.o` (`.obj`) object file |
+| `link` | Link `.o` (`.obj`) object files and `.f90` sources into an executable |
+| `emitobj` | Emit a `.f90` source as a `.o` (`.obj`) object file to a specific path |
+| `run` | Parse, check, and execute a `.f90` source file |
+| `help` | Show help for `f90c` or subcommands |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-o`, `--out <path>` | Output executable or object path. Defaults derived from the first source |
+| `--Wall` | Enable all warnings |
+| `--Werror` | Treat warnings as errors |
+| `--lto` | Enable Link Time Optimization (LTO) for better performance |
+| `-O`, `--opt-level <LEVEL>` | Set optimization level: `0`, `1`, `2`, `3`, `s`, `z`, `S`, `Z` (default `2`) |
+| `-q`, `--quiet` | Suppress all output except errors |
+| `-h`, `--help` | Show help message |
+| `-v`, `--version` | Show version information |
+
+---
+
+## Subcommands Details
+
+### `lex`
+
+```bash
+f90c lex input.f90
 ```
---wall    Enable extra warnings
---werror  Treat warnings as errors
+
+- `input.f90` – Input Fortran 90 source file
+
+---
+
+### `parse`
+
+```bash
+f90c parse input.f90
+```
+
+- `input.f90` – Input Fortran 90 source file
+
+---
+
+### `check`
+
+```bash
+f90c check input.f90
+```
+
+- `input.f90` – Input Fortran 90 source file
+
+---
+
+### `build`
+
+```bash
+f90c build input.f90 [options]
+```
+
+Options:
+
+- `-o`, `--out <path>` – Output object path (defaults next to input with `.o` (`.obj`))  
+- `--run` – Run after build
+
+---
+
+### `link`
+
+```bash
+f90c link links.o inputs.f90 [options]
+```
+
+Options:
+
+- `-o`, `--out <path>` – Output executable path  
+
+> Sources will be compiled first into `.o` (`.obj`) object files if included
+
+---
+
+### `emitobj`
+
+```bash
+f90c emitobj input.f90 -o output.o
+```
+
+- `input.f90` – Input Fortran 90 source file  
+- `output.o` – Output object file path (`.obj` on Windows)
+
+---
+
+### `run`
+
+```bash
+f90c run input.f90
+```
+
+- `input.f90` – Input Fortran 90 source file
+
+---
+
+### `help`
+
+```bash
+f90c help
 ```
 
 ---
 
-## Running the Test Suite
+## Examples
 
-The test harness (`tests/testsuite.rs`) compiles each `.f90` test and compares output against `tests/expectations.json`.
+Compile `.f90` sources into `.o` (`.obj`) object files:
 
-```powershell
-# To record expected outputs
-$env:TESTSUITE_RECORD = 1
-cargo test -- --nocapture
+```bash
+f90c main.f90 lib1.f90 utils.f90
+```
 
-# Modify the compiler...
+Compile only and generate a `.o` (`.obj`) object file:
 
-$env:TESTSUITE_RECORD = 0
+```bash
+f90c build main.f90 -o main.o
+```
 
-# Run the test harness
-cargo test -- --nocapture
+Link `.o` (`.obj`) object files into an executable:
+
+```bash
+f90c link main.o utils.o -o my_program
+```
+
+Enable all warnings and treat them as errors:
+
+```bash
+f90c main.f90 --Wall --Werror
+```
+
+Run a `.f90` program:
+
+```bash
+f90c run main.f90
 ```
 
 ---
 
-## Developer Notes
+## License
 
-- **Semantic Analyzer**: `src/sema.rs` checks for unused variables/functions and intent issues. Warnings can be promoted to errors using `--werror` or source directives like `!#error(...)`.
-- **Code Generator**: Produces native object files (COFF on Windows) with plain symbol names. Prebuilt objects can be linked directly.
-- **Test Harness**: May create temporary executables (`tests/tmp_test`) during runs; cleanup is automatic.
-
----
-
-## Contributing
-
-Open a PR with a focused change.  
-Run `cargo test` locally and update `tests/expectations.json` only when behavior intentionally changed (use record mode to update expected outputs).  
-For questions or diagnostics issues, open an issue with a minimal reproducer under `tests/`.
+This project is licensed under the **[GPLv3 License](LICENSE)**.
