@@ -3,6 +3,6 @@ program test_do_loop
     integer :: i
 
     do i = 1, 3
-        print *, "loop i:", i
+        print *, "loop i: ", i
     end do
 end program test_do_loop

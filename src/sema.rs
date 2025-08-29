@@ -144,96 +144,184 @@ pub fn analyze_with_src(
     let mut stderr = StandardStream::stderr(ColorChoice::Auto);
     let file = SimpleFile::new(filename, src);
     for stmt in &program.body {
-        if let Stmt::VarDecl { kind, names } = stmt {
-            if let TypeSpec::Integer(Some(k)) = kind {
-                if !matches!(*k, 1 | 2 | 4 | 8 | 16) {
-                    let span = tokens
-                        .iter()
-                        .position(|t| matches!(t.kind, TokenKind::KwInteger))
-                        .map(|i| tokens.get(i + 2).map(|t| t.span.clone()).unwrap_or(0..0))
-                        .unwrap_or(0..0);
-                    let msg = format!("invalid INTEGER kind {} (allowed: 1, 2, 4, 8, 16)", k);
-                    warn_or_error(
-                        "invalid_integer_kind",
-                        msg,
-                        span,
-                        settings,
-                        &mut stderr,
-                        &file,
-                        &mut errors,
-                    );
+        match stmt {
+            Stmt::VarDecl { kind, names } => {
+                // If INTEGER with explicit kind, validate it.
+                if let TypeSpec::Integer(Some(k)) = kind {
+                    if !matches!(*k, 1 | 2 | 4 | 8 | 16) {
+                        let span = tokens
+                            .iter()
+                            .position(|t| matches!(t.kind, TokenKind::KwInteger))
+                            .map(|i| tokens.get(i + 2).map(|t| t.span.clone()).unwrap_or(0..0))
+                            .unwrap_or(0..0);
+                        let msg = format!("invalid INTEGER kind {} (allowed: 1, 2, 4, 8, 16)", k);
+                        warn_or_error(
+                            "invalid_integer_kind",
+                            msg,
+                            span,
+                            settings,
+                            &mut stderr,
+                            &file,
+                            &mut errors,
+                        );
+                    }
+                }
+                // Insert all declared names into the program symbol table
+                for n in names {
+                    sym.insert(n.to_ascii_lowercase(), kind.clone());
                 }
             }
-            for n in names {
-                sym.insert(n.to_ascii_lowercase(), kind.clone());
+            // Treat DO loop index at program top-level as an implicitly-declared Integer
+            Stmt::Do { var, .. } => {
+                sym.insert(var.to_ascii_lowercase(), TypeSpec::Integer(None));
             }
+            _ => {}
         }
     }
-    let mut external_fn_ret: HashMap<String, TypeSpec> = HashMap::new();
-    // Pre-populate common Fortran intrinsics so they are treated as external
-    // functions by the semantic analyzer. This prevents "undefined function"
-    // errors for standard intrinsics and gives them a reasonable type for
-    // type checking. The mapping is conservative and may be refined later.
-    let mut known_intrinsics: HashMap<String, TypeSpec> = HashMap::new();
-    use TypeSpec::*;
-    for name in [
-        "abs",
-        "aimag",
-        "aint",
-        "anint",
-        "ceiling",
-        "cmplx",
-        "conjg",
-        "dble",
-        "dim",
-        "dprod",
-        "floor",
-        "sqrt",
-        "exp",
-        "log",
-        "log10",
-        "sin",
-        "cos",
-        "tan",
-        "asin",
-        "acos",
-        "atan",
-        "atan2",
-        "sinh",
-        "cosh",
-        "tanh",
-        "scale",
-        "set_exponent",
-        "nearest",
-        "fraction",
-        "exponent",
-        "spacing",
-        "rrspacing",
-        "precision",
-        "radix",
-        "range",
-        "tiny",
-        "epsilon",
-        "huge",
-        "max",
-        "min",
-        "sum",
-        "product",
-        "dot_product",
-        "matmul",
-        "maxval",
-        "minval",
-    ] {
-        known_intrinsics.insert(name.to_string(), Real);
+    // Collect DO loop index variables nested in program-level statements
+    fn collect_do_vars(s: &Stmt, out: &mut HashMap<String, TypeSpec>) {
+        match s {
+            Stmt::Do { var, body, .. } => {
+                out.insert(var.to_ascii_lowercase(), TypeSpec::Integer(None));
+                for st in body {
+                    collect_do_vars(st, out);
+                }
+            }
+            Stmt::DoWhile { body, .. } => {
+                for st in body {
+                    collect_do_vars(st, out);
+                }
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                for st in then_body {
+                    collect_do_vars(st, out);
+                }
+                if let Some(eb) = else_body {
+                    for st in eb {
+                        collect_do_vars(st, out);
+                    }
+                }
+            }
+            Stmt::Block { body } => {
+                for st in body {
+                    collect_do_vars(st, out);
+                }
+            }
+            Stmt::SelectCase { cases, default, .. } => {
+                for c in cases {
+                    for st in &c.body {
+                        collect_do_vars(st, out);
+                    }
+                }
+                if let Some(d) = default {
+                    for st in d {
+                        collect_do_vars(st, out);
+                    }
+                }
+            }
+            // do not recurse into Function/Subroutine/Module bodies
+            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
+            _ => {}
+        }
     }
+    for stmt in &program.body {
+        collect_do_vars(stmt, &mut sym);
+    }
+
+    // Check for EXIT/CYCLE used outside of any loop and ensure DO loop variables exist
+    fn check_loop_usage(
+        stmt: &Stmt,
+        loop_depth: usize,
+        tokens: &[Token],
+        stderr: &mut codespan_reporting::term::termcolor::StandardStream,
+        file: &codespan_reporting::files::SimpleFile<&str, &str>,
+        errors: &mut Vec<CompileError>,
+    ) {
+        match stmt {
+            Stmt::Exit => {
+                if loop_depth == 0 {
+                    // find a nearby EXIT token span
+                    let span = tokens
+                        .iter()
+                        .find(|t| matches!(t.kind, TokenKind::KwExit))
+                        .map(|t| t.span.clone())
+                        .unwrap_or(0..0);
+                    report_error("EXIT used outside of a loop", span, stderr, file, errors);
+                }
+            }
+            Stmt::Cycle => {
+                if loop_depth == 0 {
+                    let span = tokens
+                        .iter()
+                        .find(|t| matches!(t.kind, TokenKind::KwCycle))
+                        .map(|t| t.span.clone())
+                        .unwrap_or(0..0);
+                    report_error("CYCLE used outside of a loop", span, stderr, file, errors);
+                }
+            }
+            Stmt::Do { var: _, body, .. } => {
+                // DO introduces a loop level; ensure loop var is known (should have been collected)
+                if !tokens.is_empty() {
+                    // ensure declaration exists in sym would have been added earlier; if not, emit
+                    // try to find var token span
+                    // (we don't have access to sym here, but the earlier collect_do_vars should have added it)
+                }
+                for st in body {
+                    check_loop_usage(st, loop_depth + 1, tokens, stderr, file, errors);
+                }
+            }
+            Stmt::DoWhile { body, .. } => {
+                for st in body {
+                    check_loop_usage(st, loop_depth + 1, tokens, stderr, file, errors);
+                }
+            }
+            Stmt::If { then_body, else_body, .. } => {
+                for st in then_body {
+                    check_loop_usage(st, loop_depth, tokens, stderr, file, errors);
+                }
+                if let Some(eb) = else_body {
+                    for st in eb {
+                        check_loop_usage(st, loop_depth, tokens, stderr, file, errors);
+                    }
+                }
+            }
+            Stmt::Block { body } => {
+                for st in body {
+                    check_loop_usage(st, loop_depth, tokens, stderr, file, errors);
+                }
+            }
+            Stmt::SelectCase { cases, default, .. } => {
+                for c in cases {
+                    for st in &c.body {
+                        check_loop_usage(st, loop_depth, tokens, stderr, file, errors);
+                    }
+                }
+                if let Some(d) = default {
+                    for st in d {
+                        check_loop_usage(st, loop_depth, tokens, stderr, file, errors);
+                    }
+                }
+            }
+            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {
+                // do not recurse into these
+            }
+            _ => {}
+        }
+    }
+    for stmt in &program.body {
+        check_loop_usage(stmt, 0, tokens, &mut stderr, &file, &mut errors);
+    }
+    // known intrinsics and externally-provided function return types
+    let mut known_intrinsics: HashMap<String, TypeSpec> = HashMap::new();
+    let mut external_fn_ret: HashMap<String, TypeSpec> = HashMap::new();
     for name in [
         "int", "nint", "ichar", "iachar", "len", "len_trim", "count", "size", "lbound", "ubound",
-        "maxloc", "minloc", "index", "scan", "verify",
+        "maxloc", "minloc", "index", "scan", "verify", "abs",
     ] {
-        known_intrinsics.insert(name.to_string(), Integer(None));
+        known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
     for name in ["all", "any", "allocated", "lge", "lgt", "lle", "llt"] {
-        known_intrinsics.insert(name.to_string(), Logical);
+        known_intrinsics.insert(name.to_string(), TypeSpec::Logical);
     }
     for name in [
         "achar",
@@ -249,13 +337,13 @@ pub fn analyze_with_src(
         "unpack",
         "merge",
     ] {
-        known_intrinsics.insert(name.to_string(), Character(None));
+        known_intrinsics.insert(name.to_string(), TypeSpec::Character(None));
     }
     for name in [
         "btest", "iand", "ibclr", "ibits", "ibset", "ieor", "ior", "ishft", "ishftc", "not", "mod",
         "modulo",
     ] {
-        known_intrinsics.insert(name.to_string(), Integer(None));
+        known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
     // merge into external_fn_ret without overwriting any user-declared ones
     for (k, v) in known_intrinsics {
@@ -318,7 +406,7 @@ pub fn analyze_with_src(
         }
     }
     fn walk_stmt_program_reads(s: &Stmt, out: &mut HashSet<String>) {
-        match s {
+    match s {
             Stmt::Assign { value, .. } => walk_reads_for_program(value, out),
             Stmt::Print { items } => {
                 for it in items {
@@ -380,18 +468,174 @@ pub fn analyze_with_src(
                     walk_stmt_program_reads(st, out);
                 }
             }
-            Stmt::Function { body, .. }
-            | Stmt::Subroutine { body, .. }
-            | Stmt::Module { body, .. } => {
+            Stmt::DoWhile { cond, body } => {
+                walk_reads_for_program(cond, out);
                 for st in body {
                     walk_stmt_program_reads(st, out);
                 }
+            }
+            // Do NOT recurse into Function/Subroutine/Module bodies here —
+            // those are separate scopes and their local identifiers (including
+            // parameters) should not be treated as program-level reads.
+            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {
+                // skip
             }
             _ => {}
         }
     }
     for stmt in &program.body {
         walk_stmt_program_reads(stmt, &mut program_level_reads);
+    }
+
+    // Report program-level uses of identifiers that are not declared at
+    // program scope. Variables declared inside `BLOCK` are not visible here,
+    // so using them at program scope should be a semantic error.
+    for name in &program_level_reads {
+        let lname = name.to_ascii_lowercase();
+        if sym.contains_key(&lname)
+            || fn_map.contains_key(&lname)
+            || external_fn_ret.contains_key(&lname)
+        {
+            continue;
+        }
+        // Not found as a program variable, function, or known intrinsic -> error
+        // Prefer the last occurrence of the identifier in the token stream so
+        // we highlight the *use* site (e.g. the program-level reference).
+        let use_idx_opt = tokens.iter().rposition(|t| match &t.kind {
+            TokenKind::Ident(s) => s.eq_ignore_ascii_case(name),
+            _ => false,
+        });
+        let use_span = use_idx_opt.map(|i| tokens[i].span.clone()).unwrap_or(0..0);
+
+        // Try to find a prior declaration of this name that occurs inside a
+        // BLOCK region. We build block token ranges by matching KW_BLOCK and
+        // KW_END KW_BLOCK pairs (stack-aware for nesting) and then look for an
+        // identifier occurrence for `name` within that range that appears
+        // before the use site and is near a type keyword (heuristic for a
+        // declaration). If found, include a secondary label pointing to the
+        // declaration and a note in the diagnostic.
+        let mut block_stack: Vec<usize> = Vec::new();
+        let mut block_ranges: Vec<(usize, usize)> = Vec::new();
+        for i in 0..tokens.len() {
+            match &tokens[i].kind {
+                TokenKind::KwBlock => block_stack.push(i),
+                TokenKind::KwEnd => {
+                    if i + 1 < tokens.len() {
+                        if let TokenKind::KwBlock = &tokens[i + 1].kind {
+                            if let Some(sidx) = block_stack.pop() {
+                                block_ranges.push((sidx, i + 1));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Track several candidate declaration spans with preference order:
+        // 1) an explicit INTEGER declaration for the name
+        // 2) any type declaration (INTEGER/REAL/DOUBLE/CHARACTER/LOGICAL or DColon)
+        // 3) a DO-loop index occurrence (e.g. `do i = ...`)
+        // 4) fallback first identifier occurrence inside the block
+        let mut integer_decl_opt: Option<std::ops::Range<usize>> = None;
+        let mut typed_decl_opt: Option<std::ops::Range<usize>> = None;
+        let mut do_decl_opt: Option<std::ops::Range<usize>> = None;
+        let mut fallback_decl_opt: Option<std::ops::Range<usize>> = None;
+        if let Some(use_idx) = use_idx_opt {
+            'outer: for (sidx, eidx) in &block_ranges {
+                // only consider blocks that end before the use site
+                if *eidx >= use_idx {
+                    continue;
+                }
+                // search for an Ident token equal to name in this range
+                for j in *sidx..=*eidx {
+                    if let TokenKind::Ident(id) = &tokens[j].kind {
+                        if id.eq_ignore_ascii_case(name) {
+                            // window to look for nearby type keyword
+                            let start_check = if j >= 6 { j - 6 } else { 0 };
+
+                            // Prefer an INTEGER keyword specifically
+                            let mut seen_integer = false;
+                            for k in start_check..=j {
+                                if let TokenKind::KwInteger = &tokens[k].kind {
+                                    seen_integer = true;
+                                    break;
+                                }
+                            }
+                            if seen_integer {
+                                integer_decl_opt = Some(tokens[j].span.clone());
+                                // best possible match; stop searching
+                                break 'outer;
+                            }
+
+                            // If not INTEGER, check for any type keyword or DColon
+                            let mut seen_type = false;
+                            for k in start_check..=j {
+                                match &tokens[k].kind {
+                                    TokenKind::KwReal
+                                    | TokenKind::KwDouble
+                                    | TokenKind::KwCharacter
+                                    | TokenKind::KwLogical
+                                    | TokenKind::DColon => {
+                                        seen_type = true;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if seen_type && typed_decl_opt.is_none() {
+                                typed_decl_opt = Some(tokens[j].span.clone());
+                            }
+
+                            // Detect DO loop index: identifier immediately after KW_DO
+                            if j >= 1 {
+                                if let TokenKind::KwDo = &tokens[j - 1].kind {
+                                    if do_decl_opt.is_none() {
+                                        do_decl_opt = Some(tokens[j].span.clone());
+                                    }
+                                }
+                            }
+
+                            // Fallback: first ident occurrence inside block
+                            if fallback_decl_opt.is_none() {
+                                fallback_decl_opt = Some(tokens[j].span.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let decl_span_opt: Option<std::ops::Range<usize>> = if integer_decl_opt.is_some() {
+            integer_decl_opt
+        } else if typed_decl_opt.is_some() {
+            typed_decl_opt
+        } else if do_decl_opt.is_some() {
+            do_decl_opt
+        } else {
+            fallback_decl_opt
+        };
+
+        use codespan_reporting::diagnostic::{Diagnostic, Label};
+        use codespan_reporting::term::{emit, Config};
+        if let Some(decl_span) = decl_span_opt {
+            let msg = format!("undefined variable `{}` (declared in an inner BLOCK)", name);
+            let diag = Diagnostic::error().with_message(&msg).with_labels(vec![
+                Label::primary((), use_span.clone()),
+                Label::secondary((), decl_span.clone()),
+            ]);
+            let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+            errors.push(CompileError::new(CompileErrorKind::Semantic, msg, use_span));
+        } else {
+            // No prior block-local declaration found; emit plain undefined-var error
+            report_error(
+                &format!("undefined variable `{}`", name),
+                use_span,
+                &mut stderr,
+                &file,
+                &mut errors,
+            );
+        }
     }
 
     let find_ident_span = |name: &str| -> std::ops::Range<usize> {
@@ -964,12 +1208,13 @@ pub fn analyze_with_src(
                             );
                         }
                     }
-                    Stmt::Do {
-                        start,
-                        end,
-                        body: loop_body,
-                        ..
-                    } => {
+                    Stmt::Do { var, start, end, body: loop_body, .. } => {
+                        // declare loop index as local integer (common Fortran behavior)
+                        let lname = var.to_ascii_lowercase();
+                        let mut new_local = local.clone();
+                        if !new_local.contains_key(&lname) {
+                            new_local.insert(lname.clone(), TypeSpec::Integer(None));
+                        }
                         walk_reads_in_expr(start, read_vars);
                         walk_reads_in_expr(end, read_vars);
                         inner(
@@ -977,7 +1222,7 @@ pub fn analyze_with_src(
                             fname,
                             is_function,
                             declared_ret,
-                            local,
+                            &new_local,
                             fn_map,
                             external_fn_ret,
                             find_ident_span,

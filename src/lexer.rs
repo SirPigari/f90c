@@ -11,7 +11,32 @@ pub enum TokenKind {
     #[regex(r#"\"([^"\\]|\\.)*\""#, |lex| {
         let s = lex.slice();
         let inner = &s[1..s.len()-1];
-        inner.replace("\\\"", "\"")
+        // Unescape common sequences: \n, \t, \\\\, and escaped quotes
+        let mut out = String::new();
+        let mut chars = inner.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    match next {
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        '\\' => out.push('\\'),
+                        '"' => out.push('"'),
+                        'r' => out.push('\r'),
+                        other => {
+                            // unknown escape, keep as-is
+                            out.push('\\');
+                            out.push(other);
+                        }
+                    }
+                } else {
+                    out.push('\\');
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
     })]
     Str(String),
     #[regex(r"([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().to_string())]
@@ -46,6 +71,8 @@ pub enum TokenKind {
     KwElse,
     #[token("do", ignore(ascii_case))]
     KwDo,
+    #[token("while", ignore(ascii_case))]
+    KwWhile,
     #[token("integer", ignore(ascii_case))]
     KwInteger,
     #[token("real", ignore(ascii_case))]
@@ -76,6 +103,14 @@ pub enum TokenKind {
     KwCase,
     #[token("default", ignore(ascii_case))]
     KwDefault,
+    #[token("block", ignore(ascii_case))]
+    KwBlock,
+    #[token("exit", ignore(ascii_case))]
+    KwExit,
+    #[token("cycle", ignore(ascii_case))]
+    KwCycle,
+    #[token("stop", ignore(ascii_case))]
+    KwStop,
     #[token("**")]
     Pow,
     #[token("//")]
@@ -102,6 +137,8 @@ pub enum TokenKind {
     Star,
     #[token("::")]
     DColon,
+    #[token(":")]
+    Colon,
     #[token("=")]
     Eq,
     #[token("(")]

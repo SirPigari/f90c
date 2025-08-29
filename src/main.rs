@@ -3,6 +3,7 @@ use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};
 use structopt::StructOpt;
 
+
 mod ast;
 mod cli;
 mod codegen;
@@ -146,7 +147,11 @@ fn main() -> Result<()> {
                 utils::format_bytes(file_size)
             );
             if run {
-                runtime::run_executable(&exe_out)?;
+                println!("Running executable: {}", exe_out.display());
+                println!("-----------------------------------------");
+                let code = runtime::run_executable(&exe_out);
+                println!("-----------------------------------------");
+                println!("{} exited with code {}", exe_out.display(), code);
             }
         }
         cli::Command::EmitObj { input, out } => {
@@ -685,7 +690,46 @@ fn compile_to_object(
     }
     let flags = Flags::new(flag_builder);
     let backend = codegen::cranelift::CraneliftBackend::with_flags(flags);
-    let obj = backend.compile(&module)?;
+    // run backend compile and translate certain backend errors into codespan diagnostics
+    let obj = match backend.compile(&module) {
+        Ok(o) => o,
+        Err(e) => {
+            let msg = e.to_string();
+            // expected backend message when loop var undefined: "Undefined loop variable `{}` in DO"
+            if msg.starts_with("Undefined loop variable") {
+                // extract identifier between backticks if present
+                if let Some(start) = msg.find('`') {
+                    if let Some(end) = msg[start + 1..].find('`') {
+                        let var = &msg[start + 1..start + 1 + end];
+                        // find token span for identifier
+                        let span = tokens
+                            .iter()
+                            .find(|t| match &t.kind {
+                                crate::lexer::TokenKind::Ident(s) => s.eq_ignore_ascii_case(var),
+                                _ => false,
+                            })
+                            .map(|t| t.span.clone())
+                            .unwrap_or(0..0);
+
+                        // emit codespan diagnostic
+                        use codespan_reporting::diagnostic::{Diagnostic, Label};
+                        use codespan_reporting::term::{emit, Config};
+                        use codespan_reporting::files::SimpleFile;
+                        use codespan_reporting::term::termcolor::StandardStream;
+
+                        let mut stderr = StandardStream::stderr(codespan_reporting::term::termcolor::ColorChoice::Auto);
+                        let file = SimpleFile::new(input.to_str().unwrap_or("<unknown>"), &src);
+                        let diag = Diagnostic::error()
+                            .with_message(msg)
+                            .with_labels(vec![Label::primary((), span.clone())]);
+                        let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+                        return Err(anyhow::anyhow!("compile failed"));
+                    }
+                }
+            }
+            return Err(e);
+        }
+    };
     codegen::emitter::write_object_file(&obj, out)?;
     Ok(BuildArtifact {
         object: out.to_path_buf(),

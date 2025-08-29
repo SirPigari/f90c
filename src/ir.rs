@@ -47,6 +47,10 @@ pub enum IStmt {
         end: IExpr,
         body: Vec<IStmt>,
     },
+    DoWhile {
+        cond: IExpr,
+        body: Vec<IStmt>,
+    },
     Call(String, Vec<IExpr>),
     Read(Vec<IExpr>),
     SelectCase {
@@ -54,6 +58,11 @@ pub enum IStmt {
         cases: Vec<IcCase>,
         default: Option<Vec<IStmt>>,
     },
+    Block {
+        body: Vec<IStmt>,
+    },
+    Exit,
+    Cycle,
 }
 
 #[derive(Debug, Clone)]
@@ -365,6 +374,22 @@ pub fn lower_to_ir(program: &Program) -> Result<LowerOutput> {
                     }
                 }
                 Stmt::ImplicitNone => { /* no-op */ } // SelectCase already handled above; nothing to do here
+                Stmt::Block { body } => {
+                    let mut b = Vec::new();
+                    lower_stmts(&mut b, body, collected, external_ret);
+                    out.push(IStmt::Block { body: b });
+                }
+                Stmt::DoWhile { cond, body } => {
+                    let mut b = Vec::new();
+                    lower_stmts(&mut b, body, collected, external_ret);
+                    out.push(IStmt::DoWhile { cond: lower_expr(cond), body: b });
+                }
+                Stmt::Exit => {
+                    out.push(IStmt::Exit);
+                }
+                Stmt::Cycle => {
+                    out.push(IStmt::Cycle);
+                }
             }
         }
     }

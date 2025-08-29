@@ -34,7 +34,7 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         let mut v = vec![format!("/OUT:{}", out.display())];
 
         for obj in objects {
-            println!("[link] reading object file {:?}", obj);
+            println!("[link] reading object file {}", obj.display());
             v.push(obj.to_string_lossy().to_string());
         }
 
@@ -76,6 +76,6 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         );
     }
 
-    println!("[link] successfully linked {:?}", out);
+    println!("[link] successfully linked {}", out.display());
     Ok(())
 }

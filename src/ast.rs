@@ -38,6 +38,10 @@ pub enum Stmt {
         end: Expr,
         body: Vec<Stmt>,
     },
+    DoWhile {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
     Function {
         name: String,
         params: Vec<String>,
@@ -70,6 +74,11 @@ pub enum Stmt {
         cases: Vec<CaseBlock>,
         default: Option<Vec<Stmt>>,
     },
+    Block {
+        body: Vec<Stmt>,
+    },
+    Exit,
+    Cycle,
 }
 
 #[derive(Debug, Clone)]

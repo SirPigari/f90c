@@ -19,7 +19,8 @@ extern {
         KW_IF => TokenKind::KwIf,
         KW_THEN => TokenKind::KwThen,
         KW_ELSE => TokenKind::KwElse,
-        KW_DO => TokenKind::KwDo,
+    KW_DO => TokenKind::KwDo,
+    KW_WHILE => TokenKind::KwWhile,
         KW_INTEGER => TokenKind::KwInteger,
         KW_REAL => TokenKind::KwReal,
         KW_DOUBLE => TokenKind::KwDouble,
@@ -35,11 +36,11 @@ extern {
         FALSE => TokenKind::False,
         COMMA => TokenKind::Comma,
         STAR => TokenKind::Star,
-        DCOLON => TokenKind::DColon,
+    DCOLON => TokenKind::DColon,
+    COLON => TokenKind::Colon,
         EQ => TokenKind::Eq,
         LPAREN => TokenKind::LParen,
         RPAREN => TokenKind::RParen,
-        // New operators
         PLUS => TokenKind::Plus,
         MINUS => TokenKind::Minus,
         SLASH => TokenKind::Slash,
@@ -61,9 +62,13 @@ extern {
         KW_CONTAINS => TokenKind::KwContains,
         KW_USE => TokenKind::KwUse,
         KW_MODULE => TokenKind::KwModule,
-    KW_SELECT => TokenKind::KwSelect,
-    KW_CASE => TokenKind::KwCase,
-    KW_DEFAULT => TokenKind::KwDefault,
+        KW_SELECT => TokenKind::KwSelect,
+        KW_CASE => TokenKind::KwCase,
+        KW_DEFAULT => TokenKind::KwDefault,
+        KW_BLOCK => TokenKind::KwBlock,
+        KW_EXIT => TokenKind::KwExit,
+        KW_CYCLE => TokenKind::KwCycle,
+        KW_STOP => TokenKind::KwStop,
     }
 }
 
@@ -143,9 +148,14 @@ Stmt: Stmt = {
         Stmt::Read { args: cloned }
     },
     KW_CALL <name: Ident> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
+    // Single-line IF: executes a single statement when condition true, e.g. `if (cond) cycle`
+    KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
+        let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
+    },
     KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: None },
     KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_ELSE <else_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: Some(else_stmts) },
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
+    KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
     <t: TypeSpec> COMMA Ident LPAREN Ident RPAREN DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
     <t: TypeSpec> DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
@@ -163,6 +173,10 @@ Stmt: Stmt = {
         }
         Stmt::SelectCase { expr: e, cases: blocks, default }
     },
+    KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
+    KW_EXIT => Stmt::Exit,
+    KW_CYCLE => Stmt::Cycle,
+    KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "__f90c_stop".to_string(), args: vec![arg] },
 };
 
 ParamList: Vec<String> = {

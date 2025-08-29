@@ -206,6 +206,20 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
+                if name == "__f90c_stop" {
+                    // special internal STOP handling: evaluate single arg and exit
+                    let mut arg_vals: Vec<ValueTuple> = Vec::new();
+                    for a in args {
+                        arg_vals.push(eval_expr(
+                            a, env_str, env_int, env_real32, env_real64, env_log, funcs, call_stack,
+                        ));
+                    }
+                    if let Some(code) = arg_vals.get(0).and_then(|v| v.0) {
+                        std::process::exit(code as i32);
+                    } else {
+                        std::process::exit(0);
+                    }
+                }
                 if let Some(fd) = funcs.get(name) {
                     let mut arg_vals: Vec<ValueTuple> = Vec::new();
                     for a in args {
@@ -770,6 +784,27 @@ pub fn interpret(program: &Program) {
                         }
                     }
                 }
+                Stmt::DoWhile { cond, body } => {
+                    loop {
+                        let (strs, ints, r32, r64, logs) = {
+                            let fr = call_stack.last().unwrap();
+                            (
+                                fr.env_str.clone(),
+                                fr.env_int.clone(),
+                                fr.env_real32.clone(),
+                                fr.env_real64.clone(),
+                                fr.env_log.clone(),
+                            )
+                        };
+                        let cond_val = eval_logical(cond, &logs, &ints, &r64, &r32, &strs, funcs, call_stack);
+                        if !cond_val {
+                            break;
+                        }
+                        if let Some(ret) = exec_stmts(body, funcs, call_stack) {
+                            return Some(ret);
+                        }
+                    }
+                }
                 Stmt::Do {
                     var,
                     start,
@@ -790,12 +825,20 @@ pub fn interpret(program: &Program) {
                     let ev = eval_expr(end, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
                     let s = sv.0.or(sv.1.map(|f| f as i64)).unwrap_or(0);
                     let e = ev.0.or(ev.1.map(|f| f as i64)).unwrap_or(0);
-                    for i in s..=e {
+                    'outer: for i in s..=e {
                         {
                             let frame = call_stack.last_mut().unwrap();
                             frame.env_int.insert(var.clone(), i);
                         }
                         if let Some(ret) = exec_stmts(body, funcs, call_stack) {
+                            // Interpret special control returns: 1 = EXIT, 2 = CYCLE
+                            if let Some(v) = ret.0 {
+                                if v == 1 {
+                                    break 'outer; // EXIT
+                                } else if v == 2 {
+                                    continue 'outer; // CYCLE
+                                }
+                            }
                             return Some(ret);
                         }
                     }
@@ -903,6 +946,21 @@ pub fn interpret(program: &Program) {
                 Stmt::Function { .. } | Stmt::Subroutine { .. } => {}
                 Stmt::Use { .. } | Stmt::Module { .. } => {}
                 Stmt::ImplicitNone => {}
+                Stmt::Block { body } => {
+                    // Execute block body in same frame; treat EXIT/CYCLE specially
+                    if let Some(ret) = exec_stmts(body, funcs, call_stack) {
+                        return Some(ret);
+                    }
+                }
+                Stmt::Exit => {
+                    // Represent EXIT as a special return value: integer 1 wrapped
+                    // as ValueTuple to be interpreted by surrounding loops.
+                    return Some(ValueTuple::from_int(1));
+                }
+                Stmt::Cycle => {
+                    // Represent CYCLE as a special return value: integer 2
+                    return Some(ValueTuple::from_int(2));
+                }
                 Stmt::SelectCase {
                     expr,
                     cases,
@@ -929,23 +987,47 @@ pub fn interpret(program: &Program) {
                                         e, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
                                     );
                                     // Compare based on available types: prefer integer, then real, then string
-                                    let eq = if let (Some(si), Some(ii)) = (sel.0, v.0) {
-                                        si == ii
-                                    } else if let (Some(sf), Some(vf)) = (sel.1, v.1) {
-                                        (sf - vf).abs() < 1e-12
-                                    } else if let (Some(ss), Some(vs)) =
-                                        (sel.3.clone(), v.3.clone())
-                                    {
-                                        ss == vs
-                                    } else {
-                                        false
-                                    };
-                                    if eq {
-                                        matched = true;
-                                        if let Some(ret) = exec_stmts(&cb.body, funcs, call_stack) {
-                                            return Some(ret);
+                                    if let (Some(si), Some(ii)) = (sel.0, v.0) {
+                                        if si == ii {
+                                            matched = true;
+                                            if let Some(ret) =
+                                                exec_stmts(&cb.body, funcs, call_stack)
+                                            {
+                                                // If EXIT/CYCLE, propagate upwards to be handled by surrounding loops
+                                                if let Some(v) = ret.0 {
+                                                    if v == 1 || v == 2 {
+                                                        return Some(ret);
+                                                    }
+                                                }
+                                                return Some(ret);
+                                            }
+                                            break;
+                                        } else {
+                                            // fallthrough for other types
+                                            let eq = if let (Some(sf), Some(vf)) = (sel.1, v.1) {
+                                                (sf - vf).abs() < 1e-12
+                                            } else if let (Some(ss), Some(vs)) =
+                                                (sel.3.clone(), v.3.clone())
+                                            {
+                                                ss == vs
+                                            } else {
+                                                false
+                                            };
+                                            if eq {
+                                                matched = true;
+                                                if let Some(ret) =
+                                                    exec_stmts(&cb.body, funcs, call_stack)
+                                                {
+                                                    if let Some(v) = ret.0 {
+                                                        if v == 1 || v == 2 {
+                                                            return Some(ret);
+                                                        }
+                                                    }
+                                                    return Some(ret);
+                                                }
+                                                break;
+                                            }
                                         }
-                                        break;
                                     }
                                 }
                                 CaseItem::Range(l, r) => {
@@ -1092,17 +1174,12 @@ pub extern "C" fn f90c_read_str(out: *mut u8, len: usize) -> i32 {
     0
 }
 
-pub fn run_executable(path: &std::path::Path) -> Result<(), std::io::Error> {
+pub fn run_executable(path: &std::path::Path) -> i32 {
     use std::process::Command;
 
-    let status = Command::new(path).status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Executable failed",
-        ))
+    match Command::new(path).status() {
+        Ok(status) if status.success() => 0,
+        Ok(status) => status.code().unwrap_or(-1),
+        Err(_) => -1,
     }
 }

@@ -1206,6 +1206,8 @@ fn gen_stmts(
     i128_last: &mut HashMap<String, String>,
     func_meta: &HashMap<String, FuncMeta>,
     current_fn: Option<&str>,
+    current_loop_after: Option<ir::Block>,
+    current_loop_continue: Option<ir::Block>,
 ) -> Result<bool> {
     use ir::{types, MemFlags};
     for st in stmts {
@@ -1437,7 +1439,7 @@ fn gen_stmts(
                 b.switch_to_block(then_blk);
                 let tr = gen_stmts(
                     b, ex, ptr_ty, module, dc, then_body, ints, reals, bools, chars, real_kind,
-                    i128_vars, i128_last, func_meta, current_fn,
+                    i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue,
                 )?;
                 if tr {
                     return Ok(true);
@@ -1447,7 +1449,7 @@ fn gen_stmts(
                 if let Some(eb) = else_body {
                     let er = gen_stmts(
                         b, ex, ptr_ty, module, dc, eb, ints, reals, bools, chars, real_kind,
-                        i128_vars, i128_last, func_meta, current_fn,
+                        i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue,
                     )?;
                     if er {
                         return Ok(true);
@@ -1457,6 +1459,37 @@ fn gen_stmts(
                 b.seal_block(cont_blk);
                 b.switch_to_block(cont_blk);
             }
+            IStmt::Block { body } => {
+                let r = gen_stmts(
+                    b, ex, ptr_ty, module, dc, &body, ints, reals, bools, chars, real_kind,
+                    i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue,
+                )?;
+                if r {
+                    return Ok(true);
+                }
+            }
+            IStmt::Exit => {
+                if let Some(after) = current_loop_after {
+                    b.ins().jump(after, &[]);
+                    // after jump, this block is terminated; create a new unreachable block to continue
+                    let nb = b.create_block();
+                    b.switch_to_block(nb);
+                    b.seal_block(nb);
+                    continue;
+                }
+                return Err(anyhow::anyhow!("EXIT used outside of a loop"));
+            }
+            IStmt::Cycle => {
+                if let Some(cont) = current_loop_continue {
+                    b.ins().jump(cont, &[]);
+                    let nb = b.create_block();
+                    b.switch_to_block(nb);
+                    b.seal_block(nb);
+                    continue;
+                }
+                return Err(anyhow::anyhow!("CYCLE used outside of a loop"));
+            }
+
             IStmt::Do {
                 var,
                 start,
@@ -1472,8 +1505,12 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(), si, a, 0);
                     let loop_blk = b.create_block();
                     let body_blk = b.create_block();
+                    let continue_blk = b.create_block();
                     let after_blk = b.create_block();
+                    // entry -> loop_blk
                     b.ins().jump(loop_blk, &[]);
+
+                    // loop header: compare current <= end ? body : after
                     b.switch_to_block(loop_blk);
                     let cur = b.ins().load(types::I64, MemFlags::new(), a, 0);
                     let cmp = b
@@ -1481,23 +1518,62 @@ fn gen_stmts(
                         .icmp(ir::condcodes::IntCC::SignedGreaterThan, cur, ei);
                     b.ins().brif(cmp, after_blk, &[], body_blk, &[]);
                     b.seal_block(after_blk);
+
+                    // body block
                     b.switch_to_block(body_blk);
                     b.seal_block(body_blk);
-                    let br = gen_stmts(
-                        b, ex, ptr_ty, module, dc, body, ints, reals, bools, chars, real_kind,
+                    let tr = gen_stmts(
+                        b, ex, ptr_ty, module, dc, &body, ints, reals, bools, chars, real_kind,
                         i128_vars, i128_last, func_meta, current_fn,
+                        Some(after_blk), Some(continue_blk),
                     )?;
-                    if br {
+                    if tr {
                         return Ok(true);
                     }
+
+                    // after body, jump to continue block which performs the increment
+                    b.ins().jump(continue_blk, &[]);
+                    // continue block: perform increment then jump back to loop header
+                    b.switch_to_block(continue_blk);
                     let cur2 = b.ins().load(types::I64, MemFlags::new(), a, 0);
                     let one = b.ins().iconst(types::I64, 1);
                     let next = b.ins().iadd(cur2, one);
                     b.ins().store(MemFlags::new(), next, a, 0);
                     b.ins().jump(loop_blk, &[]);
+                    b.seal_block(continue_blk);
                     b.seal_block(loop_blk);
+
+                    // after block: continue execution after the loop
                     b.switch_to_block(after_blk);
+                } else {
+                    // loop variable not defined -> surface a clear codegen error
+                    return Err(anyhow::anyhow!("Undefined loop variable `{}` in DO", var));
                 }
+            }
+
+            IStmt::DoWhile { cond, body } => {
+                let loop_blk = b.create_block();
+                let body_blk = b.create_block();
+                let after_blk = b.create_block();
+                b.ins().jump(loop_blk, &[]);
+                b.switch_to_block(loop_blk);
+                let c = eval_expr(b, ex, ptr_ty, cond, ints, reals, bools, func_meta);
+                let cb = to_bool(b, c);
+                b.ins().brif(cb, body_blk, &[], after_blk, &[]);
+                b.seal_block(after_blk);
+                b.switch_to_block(body_blk);
+                b.seal_block(body_blk);
+                    let er = gen_stmts(
+                        b, ex, ptr_ty, module, dc, &body, ints, reals, bools, chars, real_kind,
+                        i128_vars, i128_last, func_meta, current_fn,
+                        Some(after_blk), Some(loop_blk),
+                    )?;
+                if er {
+                    return Ok(true);
+                }
+                b.ins().jump(loop_blk, &[]);
+                b.seal_block(loop_blk);
+                b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
                 if let Some(meta) = func_meta.get(name) {
@@ -1826,6 +1902,8 @@ fn gen_stmts(
                         i128_last,
                         func_meta,
                         current_fn,
+                        None,
+                        None,
                     )?;
                     if tr {
                         return Ok(true);
@@ -1839,8 +1917,23 @@ fn gen_stmts(
                     b.switch_to_block(def_blk);
                     if let Some(dbody) = default {
                         let tr = gen_stmts(
-                            b, ex, ptr_ty, module, dc, dbody, ints, reals, bools, chars, real_kind,
-                            i128_vars, i128_last, func_meta, current_fn,
+                            b,
+                            ex,
+                            ptr_ty,
+                            module,
+                            dc,
+                            dbody,
+                            ints,
+                            reals,
+                            bools,
+                            chars,
+                            real_kind,
+                            i128_vars,
+                            i128_last,
+                            func_meta,
+                            current_fn,
+                            None,
+                            None,
                         )?;
                         if tr {
                             return Ok(true);
@@ -2293,6 +2386,8 @@ impl Backend for CraneliftBackend {
                     &mut i128_last,
                     &func_meta,
                     Some(&f.name),
+                    None,
+                    None,
                 )?;
                 if !did_ret {
                     if let Some(rs) = ret_slot {
@@ -2383,6 +2478,8 @@ impl Backend for CraneliftBackend {
                     &mut i128_vars,
                     &mut i128_last,
                     &func_meta,
+                    None,
+                    None,
                     None,
                 )?;
                 let z = b.ins().iconst(types::I32, 0);

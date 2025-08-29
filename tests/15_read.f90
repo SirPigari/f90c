@@ -7,7 +7,7 @@ program main
     character(len=20) :: hello, world
     integer :: t
     read(*, *) t
-    t = ABS(t)
+    t = abs(t)
 
     print *, "Absolute value of t: ", t
 
