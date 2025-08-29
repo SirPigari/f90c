@@ -6,7 +6,7 @@
 
 ## Installation
 
-Download the precompiled binary from the [GitHub releases page](https://github.com/yourusername/f90c/releases) and place it in a directory included in your `PATH`.  
+Download the precompiled binary from the [GitHub releases page](https://github.com/SirPigari/f90c/releases) and place it in a directory included in your `PATH`.  
 
 ---
 
@@ -18,7 +18,7 @@ The general command structure is:
 f90c [subcommand] [links.o (.obj)] [inputs.f90] [options]
 ```
 
-If no subcommand is provided, all `.f90` inputs are compiled into `.o` (`.obj`) object files. It does **not** run the executable.
+If no subcommand is provided, all `.f90` inputs are compiled into an executable, optionally linking with `.o` (`.obj`) object files.
 
 ---
 
@@ -29,10 +29,10 @@ If no subcommand is provided, all `.f90` inputs are compiled into `.o` (`.obj`) 
 | `lex` | Dump tokens of a `.f90` source file |
 | `parse` | Dump AST of a `.f90` source file |
 | `check` | Run semantic checks only |
-| `build` | Compile a `.f90` source into a `.o` (`.obj`) object file |
+| `build` | Compile a `.f90` source into an executable |
 | `link` | Link `.o` (`.obj`) object files and `.f90` sources into an executable |
-| `emitobj` | Emit a `.f90` source as a `.o` (`.obj`) object file to a specific path |
-| `run` | Parse, check, and execute a `.f90` source file |
+| `emitobj` | Emit a `.f90` source as a `.o` (`.obj`) object file |
+| `run` | Parse, check, and execute a `.f90` source file via JIT |
 | `help` | Show help for `f90c` or subcommands |
 
 ### Options
@@ -84,18 +84,22 @@ f90c check input.f90
 
 ### `build`
 
+Compile a `.f90` source into an **executable**.
+
 ```bash
 f90c build input.f90 [options]
 ```
 
 Options:
 
-- `-o`, `--out <path>` – Output object path (defaults next to input with `.o` (`.obj`))  
+- `-o`, `--out <path>` – Output path for the executable  
 - `--run` – Run after build
 
 ---
 
 ### `link`
+
+Link `.o` (`.obj`) object files and `.f90` sources into an executable.
 
 ```bash
 f90c link links.o inputs.f90 [options]
@@ -111,6 +115,8 @@ Options:
 
 ### `emitobj`
 
+Emit a `.f90` source as a `.o` (`.obj`) object file to a specific path.
+
 ```bash
 f90c emitobj input.f90 -o output.o
 ```
@@ -122,6 +128,8 @@ f90c emitobj input.f90 -o output.o
 
 ### `run`
 
+Parse, check, and execute a `.f90` source file via JIT.
+
 ```bash
 f90c run input.f90
 ```
@@ -132,6 +140,8 @@ f90c run input.f90
 
 ### `help`
 
+Show help for `f90c` or subcommands.
+
 ```bash
 f90c help
 ```
@@ -140,23 +150,57 @@ f90c help
 
 ## Examples
 
-Compile `.f90` sources into `.o` (`.obj`) object files:
+Compile a single `.f90` source into an executable:
 
 ```bash
-f90c main.f90 lib1.f90 utils.f90
+f90c main.f90
 ```
 
-Compile only and generate a `.o` (`.obj`) object file:
+This produces an executable derived from the first source name.
+
+---
+
+Compile multiple `.f90` sources directly:
 
 ```bash
-f90c build main.f90 -o main.o
+f90c main.f90 file1.f90 file2.f90
 ```
 
-Link `.o` (`.obj`) object files into an executable:
+Each file is compiled **separately** into its own executable.  
+This does **not** link them together.
+
+---
+
+Build reusable object files (modules only, no `program`):
 
 ```bash
-f90c link main.o utils.o -o my_program
+f90c lib1.f90
+f90c utils.f90
 ```
+
+This produces `lib1.o` (`lib1.obj`) and `utils.o` (`utils.obj`).
+
+---
+
+Link a main program with object files:
+
+```bash
+f90c main.f90 lib1.o utils.o
+```
+
+This compiles `main.f90` and links it with the object files into a single executable.
+
+---
+
+Build an executable with a custom name:
+
+```bash
+f90c build main.f90 -o program
+```
+
+This compiles `main.f90` into an executable named `program`.
+
+---
 
 Enable all warnings and treat them as errors:
 
@@ -164,7 +208,9 @@ Enable all warnings and treat them as errors:
 f90c main.f90 --Wall --Werror
 ```
 
-Run a `.f90` program:
+---
+
+Run a `.f90` program with JIT:
 
 ```bash
 f90c run main.f90
