@@ -2238,14 +2238,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         func.body = optimize_stmt_list(func.body.clone(), Some(&func.name));
     }
 
-    if debug {
-        let mid_module = Module {
-            funcs: funcs.clone(),
-            uses_modules: uses_modules.clone(),
-        };
-        print_ir(&mid_module, "IR After optimize_stmt_list");
-    }
-
     for func in &mut funcs {
         let mut array_elem_consts: std::collections::HashMap<(String, i64), i64> =
             std::collections::HashMap::new();
@@ -2441,7 +2433,21 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                                 .map(|a| substitute_loop_var_in_expr(a, name, val))
                                 .collect();
                         }
-                        new_body.push(IStmt::Print(args));
+                        // Fold adjacent string literals into a single string literal
+                        let mut folded_args: Vec<IExpr> = Vec::new();
+                        for arg in args {
+                            match arg {
+                                IExpr::Str(s) => {
+                                    if let Some(IExpr::Str(prev)) = folded_args.last_mut() {
+                                        *prev = format!("{}{}", prev, s);
+                                    } else {
+                                        folded_args.push(IExpr::Str(s));
+                                    }
+                                }
+                                other => folded_args.push(other),
+                            }
+                        }
+                        new_body.push(IStmt::Print(folded_args));
                         continue 'stmt_loop;
                     }
                     IStmt::Call(nm, mut args) => {
@@ -2471,7 +2477,9 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     }
                 }
             }
-            func.body = new_body;
+            // After performing substitutions and folding PRINT string literals,
+            // run dead-code-elimination again to remove now-unused variables
+            func.body = eliminate_dead_code_final(new_body, Some(&func.name));
         }
     }
 
@@ -2481,12 +2489,81 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         uses_modules: uses_modules.clone(),
     };
 
+    // POST-PROCESSING: fold PRINT idents assigned once to string literals
+    let mut pre_fm = final_module.clone();
+    for func in &mut pre_fm.funcs {
+        // collect single-assigned string variables
+        let mut assign_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut str_assigns: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for st in &func.body {
+            match st {
+                IStmt::AssignStr(v, val) => {
+                    *assign_counts.entry(v.clone()).or_default() += 1;
+                    str_assigns.insert(v.clone(), val.clone());
+                }
+                IStmt::AssignExpr(v, _) | IStmt::AssignIdent(v, _) | IStmt::AssignIndex(v, _, _) => {
+                    *assign_counts.entry(v.clone()).or_default() += 1;
+                }
+                IStmt::AssignIntLit(v, _) | IStmt::AssignRealLit(v, _) | IStmt::AssignBool(v, _) => {
+                    *assign_counts.entry(v.clone()).or_default() += 1;
+                }
+                _ => {}
+            }
+        }
+
+        let single_strs: std::collections::HashMap<String, String> = str_assigns
+            .into_iter()
+            .filter(|(k, _)| assign_counts.get(k).cloned().unwrap_or(0) == 1)
+            .collect();
+
+        if !single_strs.is_empty() {
+            let mut new_body: Vec<IStmt> = Vec::new();
+            for st in func.body.drain(..) {
+                match st {
+                    IStmt::Print(args) => {
+                        // replace idents with their string literal
+                        let mut replaced: Vec<IExpr> = Vec::new();
+                        for a in args {
+                            match a {
+                                IExpr::Ident(name) => {
+                                    if let Some(s) = single_strs.get(&name) {
+                                        replaced.push(IExpr::Str(s.clone()));
+                                    } else {
+                                        replaced.push(IExpr::Ident(name));
+                                    }
+                                }
+                                other => replaced.push(other),
+                            }
+                        }
+
+                        // fold adjacent strings
+                        let mut folded: Vec<IExpr> = Vec::new();
+                        for a in replaced {
+                            if let IExpr::Str(s) = a {
+                                if let Some(IExpr::Str(prev)) = folded.last_mut() {
+                                    *prev = format!("{}{}", prev, s);
+                                } else {
+                                    folded.push(IExpr::Str(s));
+                                }
+                            } else {
+                                folded.push(a);
+                            }
+                        }
+                        new_body.push(IStmt::Print(folded));
+                    }
+                    other => new_body.push(other),
+                }
+            }
+            func.body = eliminate_dead_code_final(new_body, Some(&func.name));
+        }
+    }
+    let mut fm = pre_fm;
+
     // LAST-MOST PASS: fold accumulator into PRINT arguments when safe.
     // For each function, if there exists a fully-known array (all elements
     // assigned literal ints) and there is a variable initialized to 0 and
     // never assigned later, replace PRINT(..., var, ...) with the literal
     // total of that full array. This is conservative and only affects PRINTs.
-    let mut fm = final_module.clone();
     for func in &mut fm.funcs {
         // collect array element constants and declarations
         let mut array_elem_consts: std::collections::HashMap<(String, i64), i64> =
@@ -2580,6 +2657,10 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     }
     // overwrite final_module with the substituted version
     let final_module = fm;
+
+    if debug {
+        print_ir(&final_module, "IR After Optimization");
+    }
 
     if is_library {
         if let Some(first) = final_module.funcs.first() {
