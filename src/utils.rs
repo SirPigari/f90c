@@ -1,4 +1,3 @@
-/// Extracts exported symbol names from a Windows COFF object file (.obj)
 pub fn extract_obj_exports(
     path: &std::path::Path,
 ) -> Result<std::collections::HashSet<String>, std::io::Error> {
@@ -86,19 +85,16 @@ pub fn file_size(path: &Path) -> Result<usize> {
 }
 
 pub fn format_bytes(bytes: usize) -> String {
-    if bytes < 1024 {
+    if bytes < 1000 {
         format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.2} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes < 1024 * 1024 * 1024 * 1024 {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes < 1_000_000 {
+        format!("{:.2} KB", bytes as f64 / 1000.0)
+    } else if bytes < 1_000_000_000 {
+        format!("{:.2} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes < 1_000_000_000_000 {
+        format!("{:.2} GB", bytes as f64 / 1_000_000_000.0)
     } else {
-        format!(
-            "{:.2} TB",
-            bytes as f64 / (1024.0 * 1024.0 * 1024.0 * 1024.0)
-        )
+        format!("{:.2} TB", bytes as f64 / 1_000_000_000_000.0)
     }
 }
 

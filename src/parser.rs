@@ -4,8 +4,6 @@ use crate::ast::Program;
 use crate::errors::{CompileError, CompileErrorKind};
 use crate::lexer::{Token, TokenKind};
 
-// Include the generated parser with localized allows to silence warnings
-// emitted from the generated code (unused variables, dead code, etc.).
 #[allow(unused_variables, dead_code)]
 pub mod fortran {
     include!(concat!(env!("OUT_DIR"), "/fortran.rs"));

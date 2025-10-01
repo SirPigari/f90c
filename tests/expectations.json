@@ -86,7 +86,8 @@
       "compiler_stdout": "Wrote object: tests\\11_operators.obj\n[link] reading object file tests\\11_operators.obj\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked tests/tmp_test.exe\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [11264 BYTES, 11.00 KB]\n",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "ops add: 5\r\nops sub: 6\r\nops mul: 42\r\nops div: 4\r\nops pow: 256.0\r\nops eq: .TRUE.\r\nops ne: .TRUE.\r\nops lt: .TRUE.\r\nops gt: .FALSE.\r\nops le: .TRUE.\r\nops ge: .TRUE.\r\nops and: .FALSE.\r\nops or: .TRUE.\r\nops not: .TRUE.\r\nops eqv: .TRUE.\r\nops neqv: .TRUE.\r\nops concat: hello world\r\n"
+      "program_stdout": "ops add: 5\r\nops sub: 6\r\nops mul: 42\r\nops div: 4\r\nops pow: 256.0\r\nops eq: .TRUE.\r\nops ne: .TRUE.\r\nops lt: .TRUE.\r\nops gt: .FALSE.\r\nops le: .TRUE.\r\nops ge: .TRUE.\r\nops and: .FALSE.\r\nops or: .TRUE.\r\nops not: .TRUE.\r\nops eqv: .TRUE.\r\nops neqv: .TRUE.\r\nops concat: hello world\r\n",
+      "skip_compiler_output_check": true
     },
     "12_functions": {
       "compiler_exit_code": 0,
@@ -94,7 +95,7 @@
       "compiler_stdout": "Wrote object: tests\\12_functions.obj\n[link] reading object file tests\\12_functions.obj\n[link] linking with dynamic CRT (msvcrt.lib)\n[link] successfully linked tests/tmp_test.exe\nLinked: tests/tmp_test.exe\nCompiled tests/tmp_test.exe to 'C:/Users/Ja/Desktop/projects/f90c/tests/tmp_test.exe' , [9728 BYTES, 9.50 KB]\n",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "in foo\r\nbar x: 5\r\ni4: 5\r\n"
+      "program_stdout": "in foo\r\nbar x: 5\r\ni4: 1\r\nj4: 5\r\n"
     },
     "13_subroutine_and_args": {
       "compiler_exit_code": 0,

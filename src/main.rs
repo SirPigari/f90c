@@ -22,7 +22,7 @@ struct BuildArtifact {
     uses_modules: Vec<String>,
     has_program: bool,
     module_only: bool,
-    link_deps: Vec<std::path::PathBuf>, // objects this artifact needs linked (resolved from USE)
+    link_deps: Vec<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -378,7 +378,7 @@ fn handle_top_level_invocation(args: &cli::Cli) -> Result<bool> {
                 return Ok(true);
             }
         }
-        let lowered = ir::lower_to_ir(&ps.program)?;
+        let lowered = ir::lower_to_ir_with_debug(&ps.program, args.debug_ir)?;
         let defines_modules = lowered.defines_modules.clone();
         let uses_modules = lowered.uses_modules.clone();
         let has_program = lowered.has_program;
@@ -616,7 +616,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("compile failed"));
         }
     }
-    let lowered = ir::lower_to_ir(&program)?;
+    let lowered = ir::lower_to_ir_with_debug(&program, args.debug_ir)?;
     let defines_modules = lowered.defines_modules.clone();
     let uses_modules = lowered.uses_modules.clone();
     let has_program = lowered.has_program;

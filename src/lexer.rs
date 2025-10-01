@@ -11,7 +11,7 @@ pub enum TokenKind {
     #[regex(r#"\"([^"\\]|\\.)*\""#, |lex| {
         let s = lex.slice();
         let inner = &s[1..s.len()-1];
-        // Unescape common sequences: \n, \t, \\\\, and escaped quotes
+
         let mut out = String::new();
         let mut chars = inner.chars();
         while let Some(ch) = chars.next() {
@@ -24,7 +24,6 @@ pub enum TokenKind {
                         '"' => out.push('"'),
                         'r' => out.push('\r'),
                         other => {
-                            // unknown escape, keep as-is
                             out.push('\\');
                             out.push(other);
                         }

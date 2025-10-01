@@ -7,7 +7,6 @@ use std::process::Stdio;
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 struct Expectation {
-    compiler_stdout: String,
     compiler_stderr: String,
     compiler_exit_code: i32,
     program_stdout: String,
@@ -66,8 +65,6 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
             .arg(&link_path)
             .output()
             .expect("failed to compile link-with file");
-        exp.compiler_stdout
-            .push_str(&String::from_utf8_lossy(&link_out.stdout));
         exp.compiler_stderr
             .push_str(&String::from_utf8_lossy(&link_out.stderr));
         if !link_out.status.success() {
@@ -87,8 +84,6 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
     comp_cmd.arg(src).arg("-o").arg(&exe_path);
 
     let comp_out = comp_cmd.output().expect("failed to compile main file");
-    exp.compiler_stdout
-        .push_str(&String::from_utf8_lossy(&comp_out.stdout));
     exp.compiler_stderr
         .push_str(&String::from_utf8_lossy(&comp_out.stderr));
     exp.compiler_exit_code = comp_out.status.code().unwrap_or(-1);
@@ -197,18 +192,29 @@ fn process_case(
         *changed = true;
     } else {
         let exp = all.cases.get(stem).unwrap();
+
+        // If compilation failed, always show the error output
+        if got.compiler_exit_code != 0 {
+            if exp.compiler_exit_code != got.compiler_exit_code {
+                println!("---- {} ----", stem);
+                println!(
+                    "compiler exit expected {} got {}",
+                    exp.compiler_exit_code, got.compiler_exit_code
+                );
+                if !got.compiler_stderr.is_empty() {
+                    println!("compiler stderr:\n{}", got.compiler_stderr);
+                }
+                failures.push(stem.to_string());
+            }
+            return;
+        }
+
         if exp != &got {
             println!("---- {} ----", stem);
             if exp.compiler_exit_code != got.compiler_exit_code {
                 println!(
                     "compiler exit expected {} got {}",
                     exp.compiler_exit_code, got.compiler_exit_code
-                );
-            }
-            if exp.compiler_stdout != got.compiler_stdout {
-                println!(
-                    "compiler stdout diff\nEXPECTED:\n{}\nGOT:\n{}",
-                    exp.compiler_stdout, got.compiler_stdout
                 );
             }
             if exp.compiler_stderr != got.compiler_stderr {

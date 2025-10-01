@@ -1,12 +1,12 @@
 program test_functions
     implicit none
-    integer :: i4
+    integer :: i4, j4
 
     i4 = foo()
-    i4 = bar()
+    j4 = bar()
 
     print *, "i4: ", i4
-
+    print *, "j4: ", j4
 contains
 
 function foo()

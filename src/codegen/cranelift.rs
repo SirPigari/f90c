@@ -7,7 +7,7 @@ use super::Backend;
 use crate::ir::{IExpr, IStmt, IcCaseItem, Module};
 
 use cranelift_codegen::ir;
-use cranelift_codegen::ir::InstBuilder; // bring trait into scope
+use cranelift_codegen::ir::InstBuilder;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, Linkage, Module as _};
 use std::cmp::max;
@@ -102,7 +102,7 @@ struct Externs {
     strcmp: ir::FuncRef,
     pow: ir::FuncRef,
     scanf: ir::FuncRef,
-    // memcpy removed
+
     fmt_s: ir::Value,
     fmt_f64: ir::Value,
     fmt_i64: ir::Value,
@@ -165,21 +165,21 @@ fn declare_externs(
     sig_pow.returns.push(AbiParam::new(types::F64));
     let pow_id = module.declare_function("pow", Linkage::Import, &sig_pow)?;
     let pow_ref = module.declare_func_in_func(pow_id, b.func);
-    // declare scanf (format pointer + argument pointer)
+
     let mut sig_scanf = Signature::new(cc);
     sig_scanf.params.push(AbiParam::new(ptr_ty));
     sig_scanf.params.push(AbiParam::new(ptr_ty));
     sig_scanf.returns.push(AbiParam::new(types::I32));
     let scanf_id = module.declare_function("scanf", Linkage::Import, &sig_scanf)?;
     let scanf_ref = module.declare_func_in_func(scanf_id, b.func);
-    // strcmp import (C library)
+
     let mut sig_strcmp = Signature::new(cc);
     sig_strcmp.params.push(AbiParam::new(ptr_ty));
     sig_strcmp.params.push(AbiParam::new(ptr_ty));
     sig_strcmp.returns.push(AbiParam::new(types::I32));
     let strcmp_id = module.declare_function("strcmp", Linkage::Import, &sig_strcmp)?;
     let strcmp_ref = module.declare_func_in_func(strcmp_id, b.func);
-    // no memcpy import
+
     let mut c = 0u32;
     let fmt_s = make_data(module, b, ptr_ty, &mut c, b"%s")?;
     let fmt_f64 = make_data(module, b, ptr_ty, &mut c, b"%lf")?;
@@ -271,16 +271,11 @@ fn eval_expr(
             }
         }
         IExpr::Index(name, args) => {
-            // simple fallback: evaluate first index and load from corresponding
-            // single-dimension stack slot if present. This is a placeholder so
-            // lowering can emit Index nodes and codegen will still compile.
             if args.is_empty() {
                 CgVal::I64(b.ins().iconst(ir::types::I64, 0))
             } else {
-                // evaluate first index
                 let idx = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
-                // if base is an int array stored in 'ints', try to load
-                // compute (idx-1) and multiply by element size (8)
+
                 let one = b.ins().iconst(ir::types::I64, 1);
                 let idx_i = to_i64(b, idx);
                 let adj = b.ins().isub(idx_i, one);
@@ -414,10 +409,6 @@ fn eval_expr(
         }
         IExpr::Str(_) => CgVal::I64(b.ins().iconst(ir::types::I64, 0)),
         IExpr::Call(name, args) => {
-            // Lower a few intrinsics directly to IR for performance and
-            // correctness where possible (abs, int/real conversions, integer mod,
-            // and simple bit ops). Otherwise fall back to imported functions via
-            // func_meta (declared earlier based on import_arity/effect_ret).
             let lname = name.to_ascii_lowercase();
             match lname.as_str() {
                 "abs" => {
@@ -457,7 +448,6 @@ fn eval_expr(
                     CgVal::F64(fv)
                 }
                 "mod" => {
-                    // integer mod if both arguments are ints, otherwise float remainder via fmod
                     let a = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let bval = eval_expr(b, ex, ptr_ty, &args[1], ints, reals, bools, func_meta);
                     match (a, bval) {
@@ -468,7 +458,7 @@ fn eval_expr(
                         (aa, bb) => {
                             let af = to_f64(b, aa);
                             let bf = to_f64(b, bb);
-                            // no native frem in Cranelift; use a-b*trunc(a/b)
+
                             let div = b.ins().fdiv(af, bf);
                             let trunc = b.ins().fcvt_to_sint(ir::types::I64, div);
                             let back = b.ins().fcvt_from_sint(ir::types::F64, trunc);
@@ -521,7 +511,6 @@ fn eval_expr(
                     CgVal::I64(r)
                 }
                 "dot_product" | "matmul" => {
-                    // scalar fallback: multiply and return
                     let a_v = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let b_v = eval_expr(b, ex, ptr_ty, &args[1], ints, reals, bools, func_meta);
                     let a = to_f64(b, a_v);
@@ -600,13 +589,29 @@ fn print_expr(
             b.ins().call(ex.printf, &[ex.fmt_s, p]);
         }
         IExpr::IntLit(s) => {
-            let v = i128::from_str_radix(s, 10)
-                .ok()
-                .and_then(|v| i64::try_from(v).ok())
-                .unwrap_or(0);
-            let x = b.ins().iconst(types::I64, v);
-            let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-            b.ins().call(ex.printf, &[ex.fmt_s, p]);
+            if let Ok(v128) = i128::from_str_radix(s, 10) {
+                if let Ok(v64) = i64::try_from(v128) {
+                    let x = b.ins().iconst(types::I64, v64);
+                    let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
+                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                } else {
+                    let mut bytes = s.as_bytes().to_vec();
+                    bytes.push(0);
+                    let id_num = GLOBAL_STR_ID.fetch_add(1, Ordering::Relaxed);
+                    let name = format!(".str{}.data", id_num);
+                    let id = module.declare_data(&name, Linkage::Local, false, false)?;
+                    let mut dd = DataDescription::new();
+                    dd.define(bytes.into_boxed_slice());
+                    module.define_data(id, &dd)?;
+                    let gv = module.declare_data_in_func(id, b.func);
+                    let p = b.ins().global_value(ptr_ty, gv);
+                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                }
+            } else {
+                let x = b.ins().iconst(types::I64, 0);
+                let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
+                b.ins().call(ex.printf, &[ex.fmt_s, p]);
+            }
         }
         IExpr::RealLit(s) => {
             let v = s.parse::<f64>().unwrap_or(0.0);
@@ -627,7 +632,8 @@ fn print_expr(
                 0,
             ));
             let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
-            let nd = b.ins().iconst(types::I32, 6);
+
+            let nd = b.ins().iconst(types::I32, if s.len() > 8 { 15 } else { 6 });
             b.ins().call(ex.gcvt, &[fv, nd, p_f]);
             let p_sel = b.ins().select(is_int, p_int, p_f);
             b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
@@ -650,7 +656,6 @@ fn print_expr(
                 let p = b.ins().global_value(ptr_ty, gv);
                 b.ins().call(ex.printf, &[ex.fmt_s, p]);
             } else if let Some(len) = arrays.get(id) {
-                // whole-array print for integer array
                 if let Some(ss) = ints.get(id) {
                     for i in 0..*len {
                         let a = b.ins().stack_addr(ptr_ty, *ss, 0);
@@ -659,7 +664,6 @@ fn print_expr(
                         let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
                         b.ins().call(ex.printf, &[ex.fmt_s, p]);
                         if i + 1 < *len {
-                            // print space separator
                             let sp = make_data(module, b, ptr_ty, &mut 0u32, b" ")?;
                             b.ins().call(ex.printf, &[ex.fmt_s, sp]);
                         }
@@ -718,7 +722,6 @@ fn print_expr(
             }
         }
         IExpr::Index(_name, args) => {
-            // Print the actual array element: evaluate first index and load
             if args.is_empty() {
                 b.ins().call(ex.printf, &[ex.fmt_s, ex.p_nl]);
             } else {
@@ -855,14 +858,10 @@ fn print_expr(
             }
         }
         IExpr::Call(name, args) => {
-            // handle a few character intrinsics directly for printing
             let lname = name.to_ascii_lowercase();
             if (lname == "trim" || lname == "adjustl" || lname == "adjustr") && args.len() == 1 {
                 use ir::condcodes::IntCC;
-                // allow nested calls like trim(adjustl(str)) by resolving to the base ident;
-                // if nested, fall back to printing the base pointer (temporary, correct but
-                // doesn't perform all transforms). Full chained transform lowering can be
-                // implemented later.
+
                 let mut cur_expr = &args[0];
                 let mut chain: Vec<String> = Vec::new();
                 while let IExpr::Call(nm, a) = cur_expr {
@@ -875,16 +874,12 @@ fn print_expr(
                 match cur_expr {
                     IExpr::Ident(id) => {
                         if let Some((ss, len)) = chars.get(id) {
-                            // base pointer to the character field
                             let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                             if !chain.is_empty() {
-                                // fallback: print the base pointer directly for nested calls
                                 b.ins().call(ex.printf, &[ex.fmt_s, a]);
                                 return Ok(());
                             }
-                            // implement three behaviors by creating a temporary buffer
-                            // of size (len + 1), filling it appropriately, null-terminating,
-                            // and calling printf("%s", tmp).
+
                             let tmp_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                 ir::StackSlotKind::ExplicitSlot,
                                 (*len + 1) as u32,
@@ -892,7 +887,6 @@ fn print_expr(
                             ));
                             let tmp_ptr = b.ins().stack_addr(ptr_ty, tmp_slot, 0);
 
-                            // Common constants
                             let zero_i64 = b.ins().iconst(ir::types::I64, 0);
                             let one_i64 = b.ins().iconst(ir::types::I64, 1);
                             let len_i64 = b.ins().iconst(ir::types::I64, *len as i64);
@@ -900,12 +894,10 @@ fn print_expr(
                             let term_i8 = b.ins().iconst(ir::types::I8, 0);
                             let zero_i8 = b.ins().iconst(ir::types::I8, 0);
 
-                            // Helper: store null terminator at tmp[len]
                             b.ins()
                                 .store(ir::MemFlags::new(), term_i8, tmp_ptr, *len as i32);
 
                             if lname == "trim" {
-                                // Find last non-space index from the front by scanning up to len
                                 let idx_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
@@ -916,7 +908,7 @@ fn print_expr(
                                     8,
                                     0,
                                 ));
-                                // init idx=0, last = -1
+
                                 let idx_addr = b.ins().stack_addr(ptr_ty, idx_slot, 0);
                                 b.ins().store(ir::MemFlags::new(), zero_i64, idx_addr, 0);
                                 let neg1 = b.ins().iconst(ir::types::I64, -1);
@@ -926,7 +918,7 @@ fn print_expr(
                                 let loop_blk = b.create_block();
                                 let body_blk = b.create_block();
                                 let after_blk = b.create_block();
-                                // start loop
+
                                 b.ins().jump(loop_blk, &[]);
                                 b.switch_to_block(loop_blk);
                                 let cur =
@@ -939,15 +931,15 @@ fn print_expr(
                                 let p_cur = b.ins().iadd(a, cur);
                                 let ch = b.ins().load(ir::types::I8, ir::MemFlags::new(), p_cur, 0);
                                 let is_null = b.ins().icmp(IntCC::Equal, ch, term_i8);
-                                // if null, exit; otherwise continue in cont_blk
+
                                 let cont_blk = b.create_block();
                                 b.ins().brif(is_null, after_blk, &[], cont_blk, &[]);
                                 b.switch_to_block(cont_blk);
-                                // if not null and not space -> update last index
+
                                 let is_space = b.ins().icmp(IntCC::Equal, ch, space_i8);
-                                // if not space, store cur to last
+
                                 let neg_cmp = b.ins().icmp(IntCC::Equal, is_space, zero_i8);
-                                // implement via explicit blocks
+
                                 let then_blk = b.create_block();
                                 let cont_blk = b.create_block();
                                 b.ins().brif(neg_cmp, then_blk, &[], cont_blk, &[]);
@@ -955,23 +947,22 @@ fn print_expr(
                                 b.ins().store(ir::MemFlags::new(), cur, last_addr, 0);
                                 b.ins().jump(cont_blk, &[]);
                                 b.switch_to_block(cont_blk);
-                                // idx += 1
+
                                 let nxt = b.ins().iadd(cur, one_i64);
                                 b.ins().store(ir::MemFlags::new(), nxt, idx_addr, 0);
                                 b.ins().jump(loop_blk, &[]);
                                 b.switch_to_block(after_blk);
 
-                                // compute copy length = last+1 if last>=0 else 0
                                 let lastv =
                                     b.ins()
                                         .load(ir::types::I64, ir::MemFlags::new(), last_addr, 0);
                                 let is_neg_last =
                                     b.ins().icmp(IntCC::SignedLessThan, lastv, zero_i64);
-                                // if negative, nothing to copy -> call printf with empty tmp
+
                                 let copy_blk = b.create_block();
                                 let done_copy_blk = b.create_block();
                                 b.ins().brif(is_neg_last, done_copy_blk, &[], copy_blk, &[]);
-                                // copy loop: for i in 0..=lastv copy a[i] -> tmp[i]
+
                                 b.switch_to_block(copy_blk);
                                 let i_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
@@ -1001,12 +992,10 @@ fn print_expr(
                                 b.switch_to_block(after2);
                                 b.ins().jump(done_copy_blk, &[]);
                                 b.switch_to_block(done_copy_blk);
-                                // tmp already null-terminated at tmp[len], but ensure byte after last is 0
-                                // call printf with tmp_ptr
+
                                 b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
                                 return Ok(());
                             } else if lname == "adjustl" {
-                                // find first non-space index (start) same as earlier
                                 let idx_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
@@ -1033,19 +1022,19 @@ fn print_expr(
                                 b.ins().brif(is_null, after_blk, &[], cont_blk2, &[]);
                                 b.switch_to_block(cont_blk2);
                                 let is_space = b.ins().icmp(IntCC::Equal, ch, space_i8);
-                                // if space -> idx +=1 and loop, else finish
+
                                 let next_blk = b.create_block();
                                 b.ins().brif(is_space, next_blk, &[], after_blk, &[]);
                                 b.switch_to_block(next_blk);
                                 let nxt = b.ins().iadd(cur, one_i64);
                                 b.ins().store(ir::MemFlags::new(), nxt, idx_addr2, 0);
                                 b.ins().jump(loop_blk, &[]);
-                                // after_blk contains the start index in idx_slot
+
                                 b.switch_to_block(after_blk);
                                 let start =
                                     b.ins()
                                         .load(ir::types::I64, ir::MemFlags::new(), idx_addr2, 0);
-                                // copy from a+start into tmp_ptr starting at 0 until null or len-start
+
                                 let cnt_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
@@ -1076,7 +1065,7 @@ fn print_expr(
                                 b.ins().store(ir::MemFlags::new(), nxt, cnt_addr, 0);
                                 b.ins().jump(loop_c, &[]);
                                 b.switch_to_block(after_c);
-                                // ensure null terminator at tmp[cur_cnt]
+
                                 let curc =
                                     b.ins()
                                         .load(ir::types::I64, ir::MemFlags::new(), cnt_addr, 0);
@@ -1085,8 +1074,6 @@ fn print_expr(
                                 b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
                                 return Ok(());
                             } else {
-                                // adjustr: right-justify into field width
-                                // find first non-space (start) and content length
                                 let idx_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
@@ -1094,7 +1081,7 @@ fn print_expr(
                                 ));
                                 let idx_addr3 = b.ins().stack_addr(ptr_ty, idx_slot, 0);
                                 b.ins().store(ir::MemFlags::new(), zero_i64, idx_addr3, 0);
-                                // find start
+
                                 let loop_blk = b.create_block();
                                 let body_blk = b.create_block();
                                 let after_blk = b.create_block();
@@ -1124,7 +1111,7 @@ fn print_expr(
                                 let start =
                                     b.ins()
                                         .load(ir::types::I64, ir::MemFlags::new(), idx_addr3, 0);
-                                // count content length from start
+
                                 let cnt_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
@@ -1155,14 +1142,13 @@ fn print_expr(
                                 b.ins().store(ir::MemFlags::new(), nxt, cnt_addr2, 0);
                                 b.ins().jump(loop_c, &[]);
                                 b.switch_to_block(after_c);
-                                // cur_cnt now content length
+
                                 let content_len =
                                     b.ins()
                                         .load(ir::types::I64, ir::MemFlags::new(), cnt_addr2, 0);
-                                // compute shift = len - content_len
+
                                 let shift = b.ins().isub(len_i64, content_len);
-                                // create shifted buffer: first write 'shift' spaces, then copy content at tmp[shift..]
-                                // fill leading spaces
+
                                 let i_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
@@ -1188,14 +1174,13 @@ fn print_expr(
                                 b.ins().store(ir::MemFlags::new(), ivn, i_addr2, 0);
                                 b.ins().jump(loop_s, &[]);
                                 b.switch_to_block(after_s);
-                                // now copy content_len bytes from tmp[0..content_len] (we earlier copied content starting at tmp[0]) to tmp[shift..]
-                                // We'll do the copy backwards to allow overlapping copy
+
                                 let copy_idx = b.create_sized_stack_slot(ir::StackSlotData::new(
                                     ir::StackSlotKind::ExplicitSlot,
                                     8,
                                     0,
                                 ));
-                                // init copy_idx = content_len - 1
+
                                 let one_i64_pos = b.ins().iconst(ir::types::I64, 1);
                                 let cl_minus1 = b.ins().isub(content_len, one_i64_pos);
                                 let copy_addr = b.ins().stack_addr(ptr_ty, copy_idx, 0);
@@ -1211,19 +1196,19 @@ fn print_expr(
                                 let cmp_cp = b.ins().icmp(IntCC::SignedLessThan, ci, zero_i64);
                                 b.ins().brif(cmp_cp, after_cp, &[], body_cp, &[]);
                                 b.switch_to_block(body_cp);
-                                // src = tmp_ptr + ci
+
                                 let srcp = b.ins().iadd(tmp_ptr, ci);
                                 let ch = b.ins().load(ir::types::I8, ir::MemFlags::new(), srcp, 0);
-                                // dest = tmp_ptr + shift + ci
+
                                 let dest_index = b.ins().iadd(shift, ci);
                                 let destp = b.ins().iadd(tmp_ptr, dest_index);
                                 b.ins().store(ir::MemFlags::new(), ch, destp, 0);
-                                // decrement ci
+
                                 let dec = b.ins().isub(ci, one_i64_pos);
                                 b.ins().store(ir::MemFlags::new(), dec, copy_addr, 0);
                                 b.ins().jump(loop_cp, &[]);
                                 b.switch_to_block(after_cp);
-                                // ensure null at tmp[len]
+
                                 let p_term = b.ins().iadd(tmp_ptr, len_i64);
                                 b.ins().store(ir::MemFlags::new(), term_i8, p_term, 0);
                                 b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
@@ -1246,7 +1231,7 @@ fn print_expr(
                 let inst = b.ins().call(meta.fref, &argv);
                 let res = b.inst_results(inst);
                 match meta.ret {
-                    RetKind::Void => { /* nothing printed */ }
+                    RetKind::Void => {}
                     RetKind::I64 => {
                         if !res.is_empty() {
                             let p = int_to_str(b, ex, ptr_ty, ex.sprintf, res[0]);
@@ -1332,7 +1317,6 @@ fn gen_stmts(
                         i128_last.insert(name.clone(), "0".into());
                     }
                     crate::ast::TypeSpec::Integer(_) => {
-                        // if dims provided and single integer literal, allocate full array
                         if dims.len() == 1 {
                             if let IExpr::IntLit(s) = &dims[0] {
                                 if let Ok(len128) = i128::from_str_radix(s, 10) {
@@ -1495,19 +1479,18 @@ fn gen_stmts(
                 }
             }
             IStmt::AssignIndex(name, inds, val) => {
-                // evaluate first index only for now
                 if inds.is_empty() {
                     continue;
                 }
                 let idxv = eval_expr(b, ex, ptr_ty, &inds[0], ints, reals, bools, func_meta);
-                // compute offset = (idx-1) * element_size
+
                 let idx_i = to_i64(b, idxv);
                 let one = b.ins().iconst(ir::types::I64, 1);
                 let _zero = b.ins().iconst(ir::types::I64, 0);
                 let adj = b.ins().isub(idx_i, one);
-                // integer element size = 8, real f64 size = 8
+
                 let off = b.ins().imul_imm(adj, 8);
-                // store value depending on base array type (int or real)
+
                 if let Some(ss) = ints.get(name) {
                     let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                     let v = eval_expr(b, ex, ptr_ty, val, ints, reals, bools, func_meta);
@@ -1700,7 +1683,7 @@ fn gen_stmts(
             IStmt::Exit => {
                 if let Some(after) = current_loop_after {
                     b.ins().jump(after, &[]);
-                    // after jump, this block is terminated; create a new unreachable block to continue
+
                     let nb = b.create_block();
                     b.switch_to_block(nb);
                     b.seal_block(nb);
@@ -1736,10 +1719,9 @@ fn gen_stmts(
                     let body_blk = b.create_block();
                     let continue_blk = b.create_block();
                     let after_blk = b.create_block();
-                    // entry -> loop_blk
+
                     b.ins().jump(loop_blk, &[]);
 
-                    // loop header: compare current <= end ? body : after
                     b.switch_to_block(loop_blk);
                     let cur = b.ins().load(types::I64, MemFlags::new(), a, 0);
                     let cmp = b
@@ -1748,7 +1730,6 @@ fn gen_stmts(
                     b.ins().brif(cmp, after_blk, &[], body_blk, &[]);
                     b.seal_block(after_blk);
 
-                    // body block
                     b.switch_to_block(body_blk);
                     b.seal_block(body_blk);
                     let tr = gen_stmts(
@@ -1775,9 +1756,8 @@ fn gen_stmts(
                         return Ok(true);
                     }
 
-                    // after body, jump to continue block which performs the increment
                     b.ins().jump(continue_blk, &[]);
-                    // continue block: perform increment then jump back to loop header
+
                     b.switch_to_block(continue_blk);
                     let cur2 = b.ins().load(types::I64, MemFlags::new(), a, 0);
                     let one = b.ins().iconst(types::I64, 1);
@@ -1787,10 +1767,8 @@ fn gen_stmts(
                     b.seal_block(continue_blk);
                     b.seal_block(loop_blk);
 
-                    // after block: continue execution after the loop
                     b.switch_to_block(after_blk);
                 } else {
-                    // loop variable not defined -> surface a clear codegen error
                     return Err(anyhow::anyhow!("Undefined loop variable `{}` in DO", var));
                 }
             }
@@ -1848,7 +1826,6 @@ fn gen_stmts(
                 }
             }
             IStmt::Read(args) => {
-                // Lower READ statement: for each target ident, call scanf and store
                 for a in args {
                     if let IExpr::Ident(id) = a {
                         if let Some(ss) = ints.get(id) {
@@ -1896,13 +1873,8 @@ fn gen_stmts(
                 cases,
                 default,
             } => {
-                // Simple, conservative Select Case lowering:
-                // - supports integer selector (ints map) and character selector (chars map)
-                // - sequentially compares case items and jumps to case blocks on match
-                // - no jump-table optimization yet
                 let cont_blk = b.create_block();
 
-                // Prepare case blocks
                 let mut case_blocks: Vec<ir::Block> = Vec::new();
                 for _ in cases.iter() {
                     case_blocks.push(b.create_block());
@@ -1913,16 +1885,12 @@ fn gen_stmts(
                     None
                 };
 
-                // Attempt to handle selector forms
-                // collect temporary 'next' blocks created during sequential compares
                 let mut cmp_next_blocks: Vec<ir::Block> = Vec::new();
                 match selector {
                     IExpr::Ident(sid) => {
-                        // integer selector
                         if let Some(ss) = ints.get(sid) {
                             let sel_addr = b.ins().stack_addr(ptr_ty, *ss, 0);
                             for (ci, icase) in cases.iter().enumerate() {
-                                // each case may have multiple items
                                 for item in &icase.items {
                                     match item {
                                         IcCaseItem::Single(e) => {
@@ -1943,7 +1911,7 @@ fn gen_stmts(
                                                         selv,
                                                         lit,
                                                     );
-                                                    // branch to case block on equal, else continue
+
                                                     let next = b.create_block();
                                                     cmp_next_blocks.push(next);
                                                     b.ins().brif(
@@ -2061,15 +2029,12 @@ fn gen_stmts(
                                 }
                             }
                         } else if let Some((ss, _len)) = chars.get(sid) {
-                            // character selector: compare against literal items
                             let _selptr = b.ins().stack_addr(ptr_ty, *ss, 0);
                             for (ci, icase) in cases.iter().enumerate() {
                                 for item in &icase.items {
                                     match item {
                                         IcCaseItem::Single(e) => {
                                             if let IExpr::Str(lit) = e {
-                                                // materialize literal into data and compare byte-by-byte
-                                                // materialize literal and compare using strcmp
                                                 let bytes = lit.as_bytes();
                                                 let litp = make_data(module, b, ptr_ty, dc, bytes)?;
                                                 let selp = b.ins().stack_addr(ptr_ty, *ss, 0);
@@ -2085,14 +2050,11 @@ fn gen_stmts(
                                                 cmp_next_blocks.push(next);
                                                 b.ins().brif(eq, case_blocks[ci], &[], next, &[]);
                                                 b.switch_to_block(next);
-                                                // helper blocks from earlier string-compare implementation
-                                                // were removed when switching to strcmp; nothing to seal here
                                             }
                                         }
                                         IcCaseItem::Multi(es) => {
                                             for e in es.iter() {
                                                 if let IExpr::Str(lit) = e {
-                                                    // reuse single-item string compare logic per element
                                                     let bytes = lit.as_bytes();
                                                     let litp =
                                                         make_data(module, b, ptr_ty, dc, bytes)?;
@@ -2116,8 +2078,6 @@ fn gen_stmts(
                                                         &[],
                                                     );
                                                     b.switch_to_block(next);
-                                                    // helper blocks from earlier string-compare implementation
-                                                    // were removed when switching to strcmp; nothing to seal here
                                                 }
                                             }
                                         }
@@ -2127,22 +2087,17 @@ fn gen_stmts(
                             }
                         }
                     }
-                    _ => {
-                        // Fallback: unsupported selector shape - fall through to default
-                    }
+                    _ => {}
                 }
 
-                // If no match by explicit compares, jump to default or continue
                 if let Some(def_blk) = default_blk {
                     b.ins().jump(def_blk, &[]);
                 }
 
-                // Seal any temporary compare continuation blocks we created
                 for nb in cmp_next_blocks.iter() {
                     b.seal_block(*nb);
                 }
 
-                // Emit case bodies
                 for (ci, icase) in cases.iter().enumerate() {
                     b.switch_to_block(case_blocks[ci]);
                     let tr = gen_stmts(
@@ -2169,7 +2124,7 @@ fn gen_stmts(
                         return Ok(true);
                     }
                     b.ins().jump(cont_blk, &[]);
-                    // seal this case block now that its predecessors are emitted
+
                     b.seal_block(case_blocks[ci]);
                 }
 
@@ -2191,8 +2146,8 @@ fn gen_stmts(
                 b.seal_block(cont_blk);
                 b.switch_to_block(cont_blk);
             }
-        } // end match
-    } // end for
+        }
+    }
     Ok(false)
 }
 
@@ -2272,7 +2227,6 @@ impl Backend for CraneliftBackend {
             .collect();
         fn collect_calls_expr(e: &IExpr, out: &mut Vec<(String, usize)>) {
             match e {
-                // IExpr::Read handled at statement level; ignore here
                 IExpr::Call(n, args) => {
                     out.push((n.clone(), args.len()));
                     for a in args {
@@ -2336,14 +2290,10 @@ impl Backend for CraneliftBackend {
                 *e = max(*e, a);
             }
         }
-        // Heuristic: prepopulate signatures for well-known Fortran intrinsics so
-        // imports use the correct parameter/return kinds instead of defaulting
-        // to integer. This is a pragmatic, best-effort mapping (case-insensitive).
-        // The user requested to "add all of them"; we map numeric intrinsics to
+
         for name in import_arity.keys().cloned().collect::<Vec<_>>() {
             let lname = name.to_ascii_lowercase();
             match lname.as_str() {
-                // floating-point / numeric functions -> return real, params real
                 "abs" | "aimag" | "aint" | "anint" | "ceiling" | "cmplx" | "conjg" | "dble"
                 | "dim" | "dprod" | "floor" | "db" | "sqrt" | "exp" | "log" | "log10" | "sin"
                 | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "sinh" | "cosh" | "tanh"
@@ -2356,23 +2306,23 @@ impl Backend for CraneliftBackend {
                     param_kinds_map.insert(name.clone(), vec![ParamKind::F64; ar]);
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
-                // integer-returning numeric functions
+
                 "int" | "nint" | "ichar" | "iachar" | "len" | "len_trim" | "count" | "size"
                 | "lbound" | "ubound" | "maxloc" | "minloc" | "index" | "scan" | "verify" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Integer(None));
                     let ar = *import_arity.get(&name).unwrap_or(&1usize);
-                    // parameters are typically mixed; assume F64 for numeric, else I64
+
                     param_kinds_map.insert(name.clone(), vec![ParamKind::F64; ar]);
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
-                // logical results
+
                 "all" | "any" | "allocated" | "lge" | "lgt" | "lle" | "llt" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Logical);
                     let ar = *import_arity.get(&name).unwrap_or(&1usize);
                     param_kinds_map.insert(name.clone(), vec![ParamKind::F64; ar]);
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
-                // bitwise / integer ops
+
                 "btest" | "iand" | "ibclr" | "ibits" | "ibset" | "ieor" | "ior" | "ishft"
                 | "ishftc" | "not" | "mod" | "modulo" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Integer(None));
@@ -2380,7 +2330,7 @@ impl Backend for CraneliftBackend {
                     param_kinds_map.insert(name.clone(), vec![ParamKind::I64; ar]);
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
-                // character/string helpers - return integer or character; default to integer
+
                 "achar" | "char" | "repeat" | "trim" | "adjustl" | "adjustr" | "reshape"
                 | "transpose" | "spread" | "pack" | "unpack" | "merge" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Integer(None));
@@ -2388,9 +2338,7 @@ impl Backend for CraneliftBackend {
                     param_kinds_map.insert(name.clone(), vec![ParamKind::I64; ar]);
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
-                _ => {
-                    // leave defaults; unspecified intrinsics will be imported as i64 params/return
-                }
+                _ => {}
             }
         }
         let entry_func_name = module
@@ -2581,7 +2529,7 @@ impl Backend for CraneliftBackend {
                             ir::StackSlotKind::ExplicitSlot,
                             8,
                             0,
-                        )); // zero init
+                        ));
                         let addr = b.ins().stack_addr(ptr_ty, ss, 0);
                         let z = b.ins().iconst(types::I64, 0);
                         b.ins().store(ir::MemFlags::new(), z, addr, 0);

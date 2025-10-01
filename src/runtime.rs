@@ -5,7 +5,7 @@ use std::collections::HashMap;
 struct FuncDef {
     params: Vec<String>,
     body: Vec<Stmt>,
-    is_function: bool, // true = function, false = subroutine
+    is_function: bool,
 }
 
 pub fn interpret(program: &Program) {
@@ -107,7 +107,6 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Index(name, inds) => {
-                // single-dimension access only for now
                 let mut idx = 0usize;
                 if let Some(first) = inds.get(0) {
                     let vt = eval_expr(
@@ -117,7 +116,7 @@ pub fn interpret(program: &Program) {
                         idx = (i - 1) as usize;
                     }
                 }
-                // look up in top frame arrays
+
                 if let Some(fr) = call_stack.last() {
                     if let Some(vec) = fr.env_int_arrays.get(name) {
                         if idx < vec.len() {
@@ -233,7 +232,6 @@ pub fn interpret(program: &Program) {
             }
             Expr::Call(name, args) => {
                 if name == "__f90c_stop" {
-                    // special internal STOP handling: evaluate single arg and exit
                     let mut arg_vals: Vec<ValueTuple> = Vec::new();
                     for a in args {
                         arg_vals.push(eval_expr(
@@ -288,7 +286,6 @@ pub fn interpret(program: &Program) {
                     }
                     ValueTuple::from_int(0)
                 } else {
-                    // Try intrinsic implementations (case-insensitive)
                     let mut arg_vals: Vec<ValueTuple> = Vec::new();
                     for a in args {
                         arg_vals.push(eval_expr(
@@ -304,9 +301,6 @@ pub fn interpret(program: &Program) {
         }
     }
 
-    // Intrinsic function implementations for the interpreter. These are
-    // best-effort implementations covering numeric, logical, string and bit
-    // operations used by tests. Names are matched case-insensitively.
     fn to_real(v: &ValueTuple) -> Option<f64> {
         v.1.or(v.0.map(|i| i as f64))
     }
@@ -317,7 +311,6 @@ pub fn interpret(program: &Program) {
     fn handle_intrinsic(name: &str, args: &[ValueTuple]) -> Option<ValueTuple> {
         let n = name.to_ascii_lowercase();
         match n.as_str() {
-            // Numeric
             "abs" => {
                 if let Some(f) = to_real(args.get(0)?) {
                     Some(ValueTuple::from_real(f.abs()))
@@ -417,14 +410,14 @@ pub fn interpret(program: &Program) {
                     a.abs() * if b.is_sign_negative() { -1.0 } else { 1.0 },
                 ))
             }
-            // Numeric inquiries (best-effort)
+
             "epsilon" => Some(ValueTuple::from_real(f64::EPSILON)),
             "huge" => Some(ValueTuple::from_real(f64::MAX)),
             "tiny" => Some(ValueTuple::from_real(f64::MIN_POSITIVE)),
             "digits" => Some(ValueTuple::from_int(15)),
             "precision" => Some(ValueTuple::from_int(6)),
             "radix" => Some(ValueTuple::from_int(2)),
-            // Logical / reductions
+
             "all" => Some(ValueTuple::from_bool(
                 args.get(0).map(|v| v.2.unwrap_or(false)).unwrap_or(false),
             )),
@@ -438,7 +431,7 @@ pub fn interpret(program: &Program) {
                     0
                 },
             )),
-            // Simple array reductions / fallbacks: treat scalar as single-element
+
             "sum" => {
                 if let Some(r) = to_real(args.get(0)?) {
                     Some(ValueTuple::from_real(r))
@@ -454,14 +447,13 @@ pub fn interpret(program: &Program) {
                 }
             }
             "maxval" | "minval" | "max" | "min" => {
-                // scalar case: return the argument
                 if let Some(r) = to_real(args.get(0)?) {
                     Some(ValueTuple::from_real(r))
                 } else {
                     Some(ValueTuple::from_int(to_int(args.get(0)?)?))
                 }
             }
-            // Character / string
+
             "len" => args
                 .get(0)
                 .and_then(|v| v.3.as_ref().map(|s| ValueTuple::from_int(s.len() as i64))),
@@ -499,7 +491,7 @@ pub fn interpret(program: &Program) {
                     None
                 }
             }
-            // Bitwise/integer ops
+
             "btest" => {
                 let a = to_int(args.get(0)?)?;
                 let pos = to_int(args.get(1)?)?;
@@ -547,7 +539,7 @@ pub fn interpret(program: &Program) {
                     Some(ValueTuple::from_int((a as u64 >> (-sh) as u32) as i64))
                 }
             }
-            // Fallbacks for dot_product/matmul on scalars
+
             "dot_product" | "matmul" => {
                 if args.len() >= 2 {
                     Some(ValueTuple::from_real(
@@ -600,7 +592,7 @@ pub fn interpret(program: &Program) {
         env_real32: HashMap<String, f32>,
         env_real64: HashMap<String, f64>,
         env_log: HashMap<String, bool>,
-        // simple one-dimensional arrays stored as vectors; indexed 1-based
+
         env_int_arrays: HashMap<String, Vec<i64>>,
         env_real_arrays: HashMap<String, Vec<f64>>,
         func_name: Option<String>,
@@ -614,7 +606,7 @@ pub fn interpret(program: &Program) {
                 env_real32: HashMap::new(),
                 env_real64: HashMap::new(),
                 env_log: HashMap::new(),
-                // initialize simple array maps
+
                 env_int_arrays: HashMap::new(),
                 env_real_arrays: HashMap::new(),
                 func_name,
@@ -663,7 +655,7 @@ pub fn interpret(program: &Program) {
                 }
                 Stmt::ArrayDecl { kind, name, dims } => {
                     let fr = call_stack.last_mut().unwrap();
-                    // currently support single-dimension integer literal
+
                     if dims.len() >= 1 {
                         if let Expr::IntLit(s) = &dims[0] {
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
@@ -682,7 +674,6 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::Read { args } => {
-                    // Handle READ as syntactic sugar for CALL read(args...)
                     let fr = call_stack.last_mut().unwrap();
                     use std::io;
                     let mut input = String::new();
@@ -885,7 +876,7 @@ pub fn interpret(program: &Program) {
                             // Interpret special control returns: 1 = EXIT, 2 = CYCLE
                             if let Some(v) = ret.0 {
                                 if v == 1 {
-                                    break 'outer; // EXIT
+                                    break 'outer;
                                 } else if v == 2 {
                                     continue 'outer; // CYCLE
                                 }
@@ -984,7 +975,6 @@ pub fn interpret(program: &Program) {
                                     } else if fr.env_str.contains_key(id) {
                                         fr.env_str.insert(id.clone(), tok.to_string());
                                     } else {
-                                        // default to integer
                                         let v = parse_i64_lossy(tok);
                                         fr.env_int.insert(id.clone(), v);
                                     }
@@ -998,18 +988,14 @@ pub fn interpret(program: &Program) {
                 Stmt::Use { .. } | Stmt::Module { .. } => {}
                 Stmt::ImplicitNone => {}
                 Stmt::Block { body } => {
-                    // Execute block body in same frame; treat EXIT/CYCLE specially
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {
                         return Some(ret);
                     }
                 }
                 Stmt::Exit => {
-                    // Represent EXIT as a special return value: integer 1 wrapped
-                    // as ValueTuple to be interpreted by surrounding loops.
                     return Some(ValueTuple::from_int(1));
                 }
                 Stmt::Cycle => {
-                    // Represent CYCLE as a special return value: integer 2
                     return Some(ValueTuple::from_int(2));
                 }
                 Stmt::SelectCase {
@@ -1027,7 +1013,7 @@ pub fn interpret(program: &Program) {
                             fr.env_log.clone(),
                         )
                     };
-                    // Evaluate selector into tuple
+
                     let sel = eval_expr(expr, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
                     let mut matched = false;
                     for cb in cases {
@@ -1037,14 +1023,13 @@ pub fn interpret(program: &Program) {
                                     let v = eval_expr(
                                         e, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
                                     );
-                                    // Compare based on available types: prefer integer, then real, then string
+
                                     if let (Some(si), Some(ii)) = (sel.0, v.0) {
                                         if si == ii {
                                             matched = true;
                                             if let Some(ret) =
                                                 exec_stmts(&cb.body, funcs, call_stack)
                                             {
-                                                // If EXIT/CYCLE, propagate upwards to be handled by surrounding loops
                                                 if let Some(v) = ret.0 {
                                                     if v == 1 || v == 2 {
                                                         return Some(ret);
@@ -1054,7 +1039,6 @@ pub fn interpret(program: &Program) {
                                             }
                                             break;
                                         } else {
-                                            // fallthrough for other types
                                             let eq = if let (Some(sf), Some(vf)) = (sel.1, v.1) {
                                                 (sf - vf).abs() < 1e-12
                                             } else if let (Some(ss), Some(vs)) =
@@ -1142,7 +1126,7 @@ pub fn interpret(program: &Program) {
                         )
                     };
                     let vt = eval_expr(value, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
-                    // evaluate first index only for now and store element
+
                     let mut idx0 = 0usize;
                     if let Some(first) = indices.get(0) {
                         let vti =
@@ -1171,7 +1155,7 @@ pub fn interpret(program: &Program) {
                         }
                         vec[idx0] = f;
                     }
-                } // no-op for other statement variants
+                }
             }
             idx += 1;
         }
@@ -1192,9 +1176,6 @@ pub fn interpret(program: &Program) {
     let _ = exec_stmts(&program.body, &funcs, &mut call_stack);
 }
 
-// C-callable runtime helpers used by compiled codegen (Cranelift) to perform
-// portable list-directed reads. These have a simple ABI and are safe to call
-// from generated code in the same process.
 #[no_mangle]
 pub extern "C" fn f90c_read_i64(out: *mut i64) -> i32 {
     use std::io;
@@ -1258,7 +1239,7 @@ pub extern "C" fn f90c_read_str(out: *mut u8, len: usize) -> i32 {
     if out.is_null() || len == 0 {
         return -1;
     }
-    // no debug prints
+
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_err() {
         return -1;
@@ -1268,7 +1249,7 @@ pub extern "C" fn f90c_read_str(out: *mut u8, len: usize) -> i32 {
     let copy_len = std::cmp::min(len.saturating_sub(1), bytes.len());
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, copy_len);
-        *out.add(copy_len) = 0; // null terminate
+        *out.add(copy_len) = 0;
     }
     0
 }

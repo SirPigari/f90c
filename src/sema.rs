@@ -49,11 +49,11 @@ fn warn_or_error(
     use codespan_reporting::diagnostic::{Diagnostic, Label};
     use codespan_reporting::term::{emit, Config};
     let kn = kind_name.to_ascii_lowercase();
-    // allow list: suppress this warning entirely
+
     if settings.allow.contains(&kn) {
         return;
     }
-    // deny or error -> treat as error
+
     let treat_as_error =
         settings.werror || settings.error.contains(&kn) || settings.deny.contains(&kn);
     if treat_as_error {
@@ -146,7 +146,6 @@ pub fn analyze_with_src(
     for stmt in &program.body {
         match stmt {
             Stmt::VarDecl { kind, names } => {
-                // If INTEGER with explicit kind, validate it.
                 if let TypeSpec::Integer(Some(k)) = kind {
                     if !matches!(*k, 1 | 2 | 4 | 8 | 16) {
                         let span = tokens
@@ -166,25 +165,23 @@ pub fn analyze_with_src(
                         );
                     }
                 }
-                // Insert all declared names into the program symbol table
+
                 for n in names {
                     sym.insert(n.to_ascii_lowercase(), kind.clone());
                 }
             }
-            // Array declarations (single name) should also register the declared
-            // variable name into the symbol table so `a(5)` is recognized as an
-            // array access rather than an undefined function call.
+
             Stmt::ArrayDecl { kind, name, .. } => {
                 sym.insert(name.to_ascii_lowercase(), kind.clone());
             }
-            // Treat DO loop index at program top-level as an implicitly-declared Integer
+
             Stmt::Do { var, .. } => {
                 sym.insert(var.to_ascii_lowercase(), TypeSpec::Integer(None));
             }
             _ => {}
         }
     }
-    // Collect DO loop index variables nested in program-level statements
+
     fn collect_do_vars(s: &Stmt, out: &mut HashMap<String, TypeSpec>) {
         match s {
             Stmt::Do { var, body, .. } => {
@@ -229,7 +226,7 @@ pub fn analyze_with_src(
                     }
                 }
             }
-            // do not recurse into Function/Subroutine/Module bodies
+
             Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
             _ => {}
         }
@@ -238,7 +235,6 @@ pub fn analyze_with_src(
         collect_do_vars(stmt, &mut sym);
     }
 
-    // Check for EXIT/CYCLE used outside of any loop and ensure DO loop variables exist
     fn check_loop_usage(
         stmt: &Stmt,
         loop_depth: usize,
@@ -250,7 +246,6 @@ pub fn analyze_with_src(
         match stmt {
             Stmt::Exit => {
                 if loop_depth == 0 {
-                    // find a nearby EXIT token span
                     let span = tokens
                         .iter()
                         .find(|t| matches!(t.kind, TokenKind::KwExit))
@@ -270,12 +265,7 @@ pub fn analyze_with_src(
                 }
             }
             Stmt::Do { var: _, body, .. } => {
-                // DO introduces a loop level; ensure loop var is known (should have been collected)
-                if !tokens.is_empty() {
-                    // ensure declaration exists in sym would have been added earlier; if not, emit
-                    // try to find var token span
-                    // (we don't have access to sym here, but the earlier collect_do_vars should have added it)
-                }
+                if !tokens.is_empty() {}
                 for st in body {
                     check_loop_usage(st, loop_depth + 1, tokens, stderr, file, errors);
                 }
@@ -316,16 +306,14 @@ pub fn analyze_with_src(
                     }
                 }
             }
-            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {
-                // do not recurse into these
-            }
+            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
             _ => {}
         }
     }
     for stmt in &program.body {
         check_loop_usage(stmt, 0, tokens, &mut stderr, &file, &mut errors);
     }
-    // known intrinsics and externally-provided function return types
+
     let mut known_intrinsics: HashMap<String, TypeSpec> = HashMap::new();
     let mut external_fn_ret: HashMap<String, TypeSpec> = HashMap::new();
     for name in [
@@ -359,7 +347,7 @@ pub fn analyze_with_src(
     ] {
         known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
-    // merge into external_fn_ret without overwriting any user-declared ones
+
     for (k, v) in known_intrinsics {
         external_fn_ret.entry(k).or_insert(v);
     }
@@ -407,9 +395,6 @@ pub fn analyze_with_src(
                 out.insert(id.to_ascii_lowercase());
             }
             Expr::Call(name, args) => {
-                // Treat parser-emitted calls where the callee is actually an
-                // array access as a read of the identifier so program-level
-                // usage analysis sees `a(i)` as using `a`.
                 out.insert(name.to_ascii_lowercase());
                 for a in args {
                     walk_reads_for_program(a, out);
@@ -431,7 +416,6 @@ pub fn analyze_with_src(
                 indices,
                 value,
             } => {
-                // assignment to array element counts as a use of the array name
                 out.insert(name.to_ascii_lowercase());
                 for idx in indices {
                     walk_reads_for_program(idx, out);
@@ -504,12 +488,8 @@ pub fn analyze_with_src(
                     walk_stmt_program_reads(st, out);
                 }
             }
-            // Do NOT recurse into Function/Subroutine/Module bodies here —
-            // those are separate scopes and their local identifiers (including
-            // parameters) should not be treated as program-level reads.
-            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {
-                // skip
-            }
+
+            Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
             _ => {}
         }
     }
@@ -517,17 +497,9 @@ pub fn analyze_with_src(
         walk_stmt_program_reads(stmt, &mut program_level_reads);
     }
 
-    // Report program-level uses of identifiers that are not declared at
-    // program scope. Variables declared inside `BLOCK` are not visible here,
-    // so using them at program scope should be a semantic error.
     for name in &program_level_reads {
         let lname = name.to_ascii_lowercase();
-        // Consider a name known if it's a program variable, a declared
-        // function/subroutine name, a module-level function, or an external
-        // intrinsic/declared function return. fn_map may be populated later
-        // but `fn_name_set` already contains declared function/subroutine
-        // identifiers, so check it here to avoid false undefined-variable
-        // reports for functions that are declared later in the file.
+
         if sym.contains_key(&lname)
             || fn_map.contains_key(&lname)
             || fn_name_set.contains(&lname)
@@ -537,22 +509,13 @@ pub fn analyze_with_src(
         {
             continue;
         }
-        // Not found as a program variable, function, or known intrinsic -> error
-        // Prefer the last occurrence of the identifier in the token stream so
-        // we highlight the *use* site (e.g. the program-level reference).
+
         let use_idx_opt = tokens.iter().rposition(|t| match &t.kind {
             TokenKind::Ident(s) => s.eq_ignore_ascii_case(name),
             _ => false,
         });
         let use_span = use_idx_opt.map(|i| tokens[i].span.clone()).unwrap_or(0..0);
 
-        // Try to find a prior declaration of this name that occurs inside a
-        // BLOCK region. We build block token ranges by matching KW_BLOCK and
-        // KW_END KW_BLOCK pairs (stack-aware for nesting) and then look for an
-        // identifier occurrence for `name` within that range that appears
-        // before the use site and is near a type keyword (heuristic for a
-        // declaration). If found, include a secondary label pointing to the
-        // declaration and a note in the diagnostic.
         let mut block_stack: Vec<usize> = Vec::new();
         let mut block_ranges: Vec<(usize, usize)> = Vec::new();
         for i in 0..tokens.len() {
@@ -571,11 +534,6 @@ pub fn analyze_with_src(
             }
         }
 
-        // Track several candidate declaration spans with preference order:
-        // 1) an explicit INTEGER declaration for the name
-        // 2) any type declaration (INTEGER/REAL/DOUBLE/CHARACTER/LOGICAL or DColon)
-        // 3) a DO-loop index occurrence (e.g. `do i = ...`)
-        // 4) fallback first identifier occurrence inside the block
         let mut integer_decl_opt: Option<std::ops::Range<usize>> = None;
         let mut typed_decl_opt: Option<std::ops::Range<usize>> = None;
         let mut do_decl_opt: Option<std::ops::Range<usize>> = None;
@@ -607,7 +565,6 @@ pub fn analyze_with_src(
                                 break 'outer;
                             }
 
-                            // If not INTEGER, check for any type keyword or DColon
                             let mut seen_type = false;
                             for k in start_check..=j {
                                 match &tokens[k].kind {
@@ -626,7 +583,6 @@ pub fn analyze_with_src(
                                 typed_decl_opt = Some(tokens[j].span.clone());
                             }
 
-                            // Detect DO loop index: identifier immediately after KW_DO
                             if j >= 1 {
                                 if let TokenKind::KwDo = &tokens[j - 1].kind {
                                     if do_decl_opt.is_none() {
@@ -635,7 +591,6 @@ pub fn analyze_with_src(
                                 }
                             }
 
-                            // Fallback: first ident occurrence inside block
                             if fallback_decl_opt.is_none() {
                                 fallback_decl_opt = Some(tokens[j].span.clone());
                             }
@@ -666,7 +621,6 @@ pub fn analyze_with_src(
             let _ = emit(&mut stderr, &Config::default(), &file, &diag);
             errors.push(CompileError::new(CompileErrorKind::Semantic, msg, use_span));
         } else {
-            // No prior block-local declaration found; emit plain undefined-var error
             report_error(
                 &format!("undefined variable `{}`", name),
                 use_span,
@@ -1255,7 +1209,6 @@ pub fn analyze_with_src(
                         body: loop_body,
                         ..
                     } => {
-                        // declare loop index as local integer (common Fortran behavior)
                         let lname = var.to_ascii_lowercase();
                         let mut new_local = local.clone();
                         if !new_local.contains_key(&lname) {
@@ -1379,7 +1332,6 @@ pub fn analyze_with_src(
         for p in params.iter() {
             let lname = p.to_ascii_lowercase();
             if lname == "dummy" {
-                // ignore intentionally-unused parameter named 'dummy'
                 continue;
             }
             if !read_vars.contains(&lname) {
@@ -1398,7 +1350,6 @@ pub fn analyze_with_src(
         for name in local_declared_names.iter() {
             let lname = name.to_ascii_lowercase();
             if lname == "dummy" {
-                // ignore intentionally-unused local variable named 'dummy'
                 continue;
             }
             if !read_vars.contains(&lname) {
@@ -1431,7 +1382,7 @@ pub fn analyze_with_src(
         let mut init_assigned: HashSet<String> = HashSet::new();
         for p in params.iter() {
             match param_intent_map.get(&p.to_ascii_lowercase()) {
-                Some(ParamIntent::Out) => { /* unassigned initially */ }
+                Some(ParamIntent::Out) => {}
                 _ => {
                     init_assigned.insert(p.to_ascii_lowercase());
                 }
@@ -1714,7 +1665,6 @@ pub fn analyze_with_src(
             for n in names {
                 let lname = n.to_ascii_lowercase();
                 if lname == "dummy" {
-                    // intentionally ignore frequently unused placeholder variable 'dummy'
                     continue;
                 }
                 if fn_map.contains_key(&lname) || external_fn_ret.contains_key(&lname) {

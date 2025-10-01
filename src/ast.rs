@@ -1,4 +1,4 @@
-﻿#[derive(Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Program {
     #[allow(dead_code)]
     pub name: String,
@@ -7,11 +7,11 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 pub enum TypeSpec {
-    Integer(Option<u8>),      // kind: 1,2,4,8,16
-    Real,                     // single precision
-    DoublePrecision,          // more precise float
-    Character(Option<usize>), // len
-    Logical,                  // boolean
+    Integer(Option<u8>),
+    Real,
+    DoublePrecision,
+    Character(Option<usize>),
+    Logical,
 }
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub enum Stmt {
         kind: TypeSpec,
         names: Vec<String>,
     },
-    // explicit array declaration with dimensions, e.g. `integer :: a(5)`
+
     ArrayDecl {
         kind: TypeSpec,
         name: String,
@@ -33,7 +33,7 @@ pub enum Stmt {
         name: String,
         value: Expr,
     },
-    // assignment to array element: a(1) = expr
+
     AssignIndex {
         name: String,
         indices: Vec<Expr>,
@@ -80,7 +80,7 @@ pub enum Stmt {
         name: String,
         body: Vec<Stmt>,
     },
-    ImplicitNone, // new variant
+    ImplicitNone,
     SelectCase {
         expr: Expr,
         cases: Vec<CaseBlock>,
@@ -144,7 +144,7 @@ pub enum Expr {
     RealLit(String),
     Logical(bool),
     Ident(String),
-    // indexing: a(1) or mat(i,j)
+
     #[allow(dead_code)]
     Index(String, Vec<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
