@@ -944,14 +944,11 @@ pub fn interpret(program: &Program) {
                         let _ = exec_stmts(&fd.body, funcs, call_stack);
                         call_stack.pop();
                     }
-                    // READ handling: special call named "read" with expr args (should be idents)
                     if name.to_ascii_lowercase() == "read" {
-                        // read from stdin for each arg; support integers, reals, and strings
                         let fr = call_stack.last_mut().unwrap();
                         use std::io;
                         let mut input = String::new();
                         for arg in args {
-                            // simple prompt suppression: don't print prompt
                             input.clear();
                             io::stdin().read_line(&mut input).ok();
                             let tok = input.trim_end();

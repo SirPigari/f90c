@@ -127,7 +127,6 @@ impl std::fmt::Display for IExpr {
     }
 }
 
-// Helper to print indentation-aware statements
 fn fmt_istmt(stmt: &IStmt, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
     fn write_indent(f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
         if indent > 0 {
@@ -355,7 +354,6 @@ impl std::fmt::Display for Function {
             writeln!(f, "SUBROUTINE {}({})", self.name, self.params.join(", "))?;
         }
         for stmt in &self.body {
-            // print body with a base indent of two spaces
             fmt_istmt(stmt, f, 2)?;
         }
         if self.return_type.is_some() {
@@ -422,19 +420,15 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             _ => {}
         }
     }
-    // module_only no longer stored in LowerOutput; keep local check removed.
     let has_program = program.name != "<anon>";
 
-    // Constant folding helper: evaluate binary operations on constant values
     fn fold_binary_const(op: &crate::ast::BinOp, left: &IExpr, right: &IExpr) -> Option<IExpr> {
         use crate::ast::BinOp::*;
         match (left, right) {
-            // Integer + Integer (but be conservative with large integers)
             (IExpr::IntLit(l), IExpr::IntLit(r)) => {
                 let lval: i64 = l.parse().ok()?;
                 let rval: i64 = r.parse().ok()?;
 
-                // Don't fold if values are very large (could be double precision or i128)
                 if lval.abs() > 1_000_000_000_000i64 || rval.abs() > 1_000_000_000_000i64 {
                     return None;
                 }
@@ -2419,7 +2413,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         if !replacements.is_empty() {
             let mut new_body: Vec<IStmt> = Vec::new();
             'stmt_loop: for st in func.body.drain(..) {
-                // Conservative replacement: only substitute inside PRINT, CALL, and RETURN
                 match st {
                     IStmt::Print(mut args) => {
                         for (name, val) in &replacements {
@@ -2428,7 +2421,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                                 .map(|a| substitute_loop_var_in_expr(a, name, val))
                                 .collect();
                         }
-                        // Fold adjacent string literals into a single string literal
                         let mut folded_args: Vec<IExpr> = Vec::new();
                         for arg in args {
                             match arg {
@@ -2472,22 +2464,17 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     }
                 }
             }
-            // After performing substitutions and folding PRINT string literals,
-            // run dead-code-elimination again to remove now-unused variables
             func.body = eliminate_dead_code_final(new_body, Some(&func.name));
         }
     }
 
-    // Create the final module
     let final_module = Module {
         funcs,
         uses_modules: uses_modules.clone(),
     };
 
-    // POST-PROCESSING: fold PRINT idents assigned once to string literals
     let mut pre_fm = final_module.clone();
     for func in &mut pre_fm.funcs {
-        // collect single-assigned string variables
         let mut assign_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         let mut str_assigns: std::collections::HashMap<String, String> =
@@ -2522,7 +2509,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             for st in func.body.drain(..) {
                 match st {
                     IStmt::Print(args) => {
-                        // replace idents with their string literal
                         let mut replaced: Vec<IExpr> = Vec::new();
                         for a in args {
                             match a {
@@ -2537,7 +2523,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                             }
                         }
 
-                        // fold adjacent strings
                         let mut folded: Vec<IExpr> = Vec::new();
                         for a in replaced {
                             if let IExpr::Str(s) = a {
@@ -2560,13 +2545,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     }
     let mut fm = pre_fm;
 
-    // LAST-MOST PASS: fold accumulator into PRINT arguments when safe.
-    // For each function, if there exists a fully-known array (all elements
-    // assigned literal ints) and there is a variable initialized to 0 and
-    // never assigned later, replace PRINT(..., var, ...) with the literal
-    // total of that full array. This is conservative and only affects PRINTs.
     for func in &mut fm.funcs {
-        // collect array element constants and declarations
         let mut array_elem_consts: std::collections::HashMap<(String, i64), i64> =
             std::collections::HashMap::new();
         let mut array_dims: std::collections::HashMap<String, i64> =
@@ -2617,7 +2596,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             }
         }
 
-        // find full arrays
         let mut full_arrays: std::collections::HashMap<String, i64> =
             std::collections::HashMap::new();
         for (name, dim) in &array_dims {
@@ -2637,7 +2615,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         }
 
         if !full_arrays.is_empty() && !zero_inits.is_empty() {
-            // if we have at least one full array and one zero-init var, rewrite PRINT args
             for st in &mut func.body {
                 if let IStmt::Print(args) = st {
                     for arg in args.iter_mut() {
@@ -2645,7 +2622,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                             if zero_inits.contains(name)
                                 && assigned_counts.get(name).cloned().unwrap_or(0) == 1
                             {
-                                // choose the first full array total (conservative)
                                 if let Some((_arr, total)) = full_arrays.iter().next() {
                                     *arg = IExpr::IntLit(total.to_string());
                                 }
@@ -2656,7 +2632,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             }
         }
     }
-    // overwrite final_module with the substituted version
     let final_module = fm;
 
     if debug {
@@ -2690,7 +2665,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     })
 }
 
-// Helper function to substitute loop variable in statements
 fn substitute_loop_var(stmt: IStmt, var: &str, value: &IExpr) -> IStmt {
     match stmt {
         IStmt::AssignExpr(assign_var, expr) => {
@@ -2773,7 +2747,6 @@ fn substitute_loop_var(stmt: IStmt, var: &str, value: &IExpr) -> IStmt {
                 .map(|d| substitute_loop_var_in_expr(d, var, value))
                 .collect(),
         ),
-        // These statements don't contain variable references or are constants
         other => other,
     }
 }

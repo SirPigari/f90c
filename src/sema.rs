@@ -76,13 +76,18 @@ fn report_error(
     stderr: &mut codespan_reporting::term::termcolor::StandardStream,
     file: &codespan_reporting::files::SimpleFile<&str, &str>,
     errors: &mut Vec<CompileError>,
+    silent_undefined: bool,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
     use codespan_reporting::term::{emit, Config};
-    let diag = Diagnostic::error()
-        .with_message(message)
-        .with_labels(vec![Label::primary((), span.clone())]);
-    let _ = emit(stderr, &Config::default(), file, &diag);
+
+    if !(silent_undefined && message.contains("undefined")) {
+        let diag = Diagnostic::error()
+            .with_message(message)
+            .with_labels(vec![Label::primary((), span.clone())]);
+        let _ = emit(stderr, &Config::default(), file, &diag);
+    }
+
     errors.push(CompileError::new(CompileErrorKind::Semantic, message, span));
 }
 
@@ -93,6 +98,7 @@ pub fn analyze_with_src(
     filename: &str,
     settings: &SemaSettings,
     linked_obj_exports: &HashSet<String>,
+    silent_undefined: bool,
 ) -> Vec<CompileError> {
     let mut sym: HashMap<String, TypeSpec> = HashMap::new();
     let mut errors: Vec<CompileError> = Vec::new();
@@ -251,7 +257,14 @@ pub fn analyze_with_src(
                         .find(|t| matches!(t.kind, TokenKind::KwExit))
                         .map(|t| t.span.clone())
                         .unwrap_or(0..0);
-                    report_error("EXIT used outside of a loop", span, stderr, file, errors);
+                    report_error(
+                        "EXIT used outside of a loop",
+                        span,
+                        stderr,
+                        file,
+                        errors,
+                        false,
+                    );
                 }
             }
             Stmt::Cycle => {
@@ -261,7 +274,14 @@ pub fn analyze_with_src(
                         .find(|t| matches!(t.kind, TokenKind::KwCycle))
                         .map(|t| t.span.clone())
                         .unwrap_or(0..0);
-                    report_error("CYCLE used outside of a loop", span, stderr, file, errors);
+                    report_error(
+                        "CYCLE used outside of a loop",
+                        span,
+                        stderr,
+                        file,
+                        errors,
+                        false,
+                    );
                 }
             }
             Stmt::Do { var: _, body, .. } => {
@@ -540,18 +560,14 @@ pub fn analyze_with_src(
         let mut fallback_decl_opt: Option<std::ops::Range<usize>> = None;
         if let Some(use_idx) = use_idx_opt {
             'outer: for (sidx, eidx) in &block_ranges {
-                // only consider blocks that end before the use site
                 if *eidx >= use_idx {
                     continue;
                 }
-                // search for an Ident token equal to name in this range
                 for j in *sidx..=*eidx {
                     if let TokenKind::Ident(id) = &tokens[j].kind {
                         if id.eq_ignore_ascii_case(name) {
-                            // window to look for nearby type keyword
                             let start_check = if j >= 6 { j - 6 } else { 0 };
 
-                            // Prefer an INTEGER keyword specifically
                             let mut seen_integer = false;
                             for k in start_check..=j {
                                 if let TokenKind::KwInteger = &tokens[k].kind {
@@ -561,7 +577,6 @@ pub fn analyze_with_src(
                             }
                             if seen_integer {
                                 integer_decl_opt = Some(tokens[j].span.clone());
-                                // best possible match; stop searching
                                 break 'outer;
                             }
 
@@ -614,11 +629,13 @@ pub fn analyze_with_src(
         use codespan_reporting::term::{emit, Config};
         if let Some(decl_span) = decl_span_opt {
             let msg = format!("undefined variable `{}` (declared in an inner BLOCK)", name);
-            let diag = Diagnostic::error().with_message(&msg).with_labels(vec![
-                Label::primary((), use_span.clone()),
-                Label::secondary((), decl_span.clone()),
-            ]);
-            let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+            if !silent_undefined {
+                let diag = Diagnostic::error().with_message(&msg).with_labels(vec![
+                    Label::primary((), use_span.clone()),
+                    Label::secondary((), decl_span.clone()),
+                ]);
+                let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+            }
             errors.push(CompileError::new(CompileErrorKind::Semantic, msg, use_span));
         } else {
             report_error(
@@ -627,6 +644,7 @@ pub fn analyze_with_src(
                 &mut stderr,
                 &file,
                 &mut errors,
+                silent_undefined,
             );
         }
     }
@@ -760,6 +778,7 @@ pub fn analyze_with_src(
                         &mut stderr,
                         &file,
                         &mut errors,
+                        false,
                     );
                 } else {
                     fn_map.insert(
@@ -788,6 +807,7 @@ pub fn analyze_with_src(
                         &mut stderr,
                         &file,
                         &mut errors,
+                        false,
                     );
                 } else {
                     fn_map.insert(
@@ -824,6 +844,7 @@ pub fn analyze_with_src(
                                     &mut stderr,
                                     &file,
                                     &mut errors,
+                                    false,
                                 );
                             } else {
                                 fn_map.insert(
@@ -852,6 +873,7 @@ pub fn analyze_with_src(
                                     &mut stderr,
                                     &file,
                                     &mut errors,
+                                    false,
                                 );
                             } else {
                                 fn_map.insert(
@@ -1090,6 +1112,7 @@ pub fn analyze_with_src(
                                         stderr,
                                         file,
                                         errors,
+                                        false,
                                     );
                                 }
                             }
@@ -1142,6 +1165,7 @@ pub fn analyze_with_src(
                                             stderr,
                                             file,
                                             errors,
+                                            false,
                                         );
                                     }
                                 }
@@ -1307,6 +1331,7 @@ pub fn analyze_with_src(
                     stderr,
                     file,
                     errors,
+                    false,
                 );
             }
         }
@@ -1922,9 +1947,6 @@ pub fn analyze_with_src(
         match e {
             Expr::Call(name, args) => {
                 let lname = name.to_ascii_lowercase();
-                // If name is a declared variable it is an array indexing expression
-                // (parser currently emits Call for ident(args)). In that case do
-                // not report it as an undefined function.
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
@@ -2020,6 +2042,7 @@ pub fn analyze_with_src(
                 &mut stderr,
                 &file,
                 &mut errors,
+                silent_undefined,
             );
         }
     }
@@ -2112,5 +2135,3 @@ pub fn analyze_with_src(
 
     errors
 }
-
-// analyze_with_src_ext removed — prescan logic no longer calls this helper.

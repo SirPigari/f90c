@@ -87,7 +87,10 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         let lib_dir = temp_root.join(format!("lucia_libs_{}", uid));
         fs::create_dir_all(&lib_dir)?;
         fs::write(lib_dir.join("msvcrt.lib"), MSVCRT_LIB)?;
-        fs::write(lib_dir.join("legacy_stdio_definitions.lib"), LEGACY_STDIO_LIB)?;
+        fs::write(
+            lib_dir.join("legacy_stdio_definitions.lib"),
+            LEGACY_STDIO_LIB,
+        )?;
         fs::write(lib_dir.join("kernel32.lib"), KERNEL32_LIB)?;
 
         args.push(format!("/LIBPATH:{}", lib_dir.display()));

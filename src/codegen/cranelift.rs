@@ -204,7 +204,7 @@ fn declare_externs(
     let p_true = make_data(module, b, ptr_ty, &mut c, b".TRUE.")?;
     let p_false = make_data(module, b, ptr_ty, &mut c, b".FALSE.")?;
     let p_nl = make_data(module, b, ptr_ty, &mut c, b"\n")?;
-    
+
     Ok(Externs {
         printf: printf_ref,
         sprintf: sprintf_ref,
@@ -238,7 +238,7 @@ impl Externs {
     fn enable_caching(&mut self, b: &mut FunctionBuilder, ptr_ty: ir::Type) {
         use ir::{types, AbiParam, Signature};
         let cc = b.func.signature.call_conv;
-        
+
         // Compute function addresses once
         self.printf_addr = Some(b.ins().func_addr(ptr_ty, self.printf));
         self.sprintf_addr = Some(b.ins().func_addr(ptr_ty, self.sprintf));
@@ -246,47 +246,47 @@ impl Externs {
         self.scanf_addr = Some(b.ins().func_addr(ptr_ty, self.scanf));
         self.pow_addr = Some(b.ins().func_addr(ptr_ty, self.pow));
         self.strcmp_addr = Some(b.ins().func_addr(ptr_ty, self.strcmp));
-        
+
         // Import signatures for call_indirect
         let mut sig_printf = Signature::new(cc);
         sig_printf.params.push(AbiParam::new(ptr_ty));
         sig_printf.params.push(AbiParam::new(ptr_ty));
         sig_printf.returns.push(AbiParam::new(types::I32));
         self.sig_printf = Some(b.func.import_signature(sig_printf));
-        
+
         let mut sig_sprintf = Signature::new(cc);
         sig_sprintf.params.push(AbiParam::new(ptr_ty));
         sig_sprintf.params.push(AbiParam::new(ptr_ty));
         sig_sprintf.params.push(AbiParam::new(types::I64));
         sig_sprintf.returns.push(AbiParam::new(types::I32));
         self.sig_sprintf = Some(b.func.import_signature(sig_sprintf));
-        
+
         let mut sig_gcvt = Signature::new(cc);
         sig_gcvt.params.push(AbiParam::new(types::F64));
         sig_gcvt.params.push(AbiParam::new(types::I32));
         sig_gcvt.params.push(AbiParam::new(ptr_ty));
         sig_gcvt.returns.push(AbiParam::new(ptr_ty));
         self.sig_gcvt = Some(b.func.import_signature(sig_gcvt));
-        
+
         let mut sig_pow = Signature::new(cc);
         sig_pow.params.push(AbiParam::new(types::F64));
         sig_pow.params.push(AbiParam::new(types::F64));
         sig_pow.returns.push(AbiParam::new(types::F64));
         self.sig_pow = Some(b.func.import_signature(sig_pow));
-        
+
         let mut sig_scanf = Signature::new(cc);
         sig_scanf.params.push(AbiParam::new(ptr_ty));
         sig_scanf.params.push(AbiParam::new(ptr_ty));
         sig_scanf.returns.push(AbiParam::new(types::I32));
         self.sig_scanf = Some(b.func.import_signature(sig_scanf));
-        
+
         let mut sig_strcmp = Signature::new(cc);
         sig_strcmp.params.push(AbiParam::new(ptr_ty));
         sig_strcmp.params.push(AbiParam::new(ptr_ty));
         sig_strcmp.returns.push(AbiParam::new(types::I32));
         self.sig_strcmp = Some(b.func.import_signature(sig_strcmp));
     }
-    
+
     // Helper methods to call functions using cached addresses when available
     fn call_printf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.printf_addr, self.sig_printf) {
@@ -295,7 +295,7 @@ impl Externs {
             b.ins().call(self.printf, args)
         }
     }
-    
+
     fn call_sprintf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.sprintf_addr, self.sig_sprintf) {
             b.ins().call_indirect(sig, addr, args)
@@ -303,7 +303,7 @@ impl Externs {
             b.ins().call(self.sprintf, args)
         }
     }
-    
+
     fn call_gcvt(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.gcvt_addr, self.sig_gcvt) {
             b.ins().call_indirect(sig, addr, args)
@@ -311,7 +311,7 @@ impl Externs {
             b.ins().call(self.gcvt, args)
         }
     }
-    
+
     fn call_scanf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.scanf_addr, self.sig_scanf) {
             b.ins().call_indirect(sig, addr, args)
@@ -319,7 +319,7 @@ impl Externs {
             b.ins().call(self.scanf, args)
         }
     }
-    
+
     fn call_pow(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.pow_addr, self.sig_pow) {
             b.ins().call_indirect(sig, addr, args)
@@ -327,7 +327,7 @@ impl Externs {
             b.ins().call(self.pow, args)
         }
     }
-    
+
     fn call_strcmp(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.strcmp_addr, self.sig_strcmp) {
             b.ins().call_indirect(sig, addr, args)
@@ -336,7 +336,6 @@ impl Externs {
         }
     }
 }
-
 
 fn int_to_str(
     b: &mut FunctionBuilder,
@@ -477,7 +476,7 @@ fn eval_expr(
                                 BinOp::Mul => b.ins().fmul(lv, rv),
                                 BinOp::Div => b.ins().fdiv(lv, rv),
                                 BinOp::Pow => {
-                                    let call = b.ins().call(ex.pow, &[lv, rv]);
+                                    let call = ex.call_pow(b, &[lv, rv]);
                                     b.inst_results(call)[0]
                                 }
                                 _ => unreachable!(),
@@ -725,14 +724,14 @@ fn print_expr(
             module.define_data(id, &dd)?;
             let gv = module.declare_data_in_func(id, b.func);
             let p = b.ins().global_value(ptr_ty, gv);
-            b.ins().call(ex.printf, &[ex.fmt_s, p]);
+            ex.call_printf(b, &[ex.fmt_s, p]);
         }
         IExpr::IntLit(s) => {
             if let Ok(v128) = i128::from_str_radix(s, 10) {
                 if let Ok(v64) = i64::try_from(v128) {
                     let x = b.ins().iconst(types::I64, v64);
                     let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    ex.call_printf(b, &[ex.fmt_s, p]);
                 } else {
                     let mut bytes = s.as_bytes().to_vec();
                     bytes.push(0);
@@ -744,12 +743,12 @@ fn print_expr(
                     module.define_data(id, &dd)?;
                     let gv = module.declare_data_in_func(id, b.func);
                     let p = b.ins().global_value(ptr_ty, gv);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    ex.call_printf(b, &[ex.fmt_s, p]);
                 }
             } else {
                 let x = b.ins().iconst(types::I64, 0);
                 let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-                b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                ex.call_printf(b, &[ex.fmt_s, p]);
             }
         }
         IExpr::RealLit(s) => {
@@ -764,7 +763,7 @@ fn print_expr(
                 0,
             ));
             let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-            b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+            ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
             let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
                 ir::StackSlotKind::ExplicitSlot,
                 64,
@@ -773,13 +772,13 @@ fn print_expr(
             let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
 
             let nd = b.ins().iconst(types::I32, if s.len() > 8 { 15 } else { 6 });
-            b.ins().call(ex.gcvt, &[fv, nd, p_f]);
+            ex.call_gcvt(b, &[fv, nd, p_f]);
             let p_sel = b.ins().select(is_int, p_int, p_f);
-            b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+            ex.call_printf(b, &[ex.fmt_s, p_sel]);
         }
         IExpr::Logical(bv) => {
             let p = if *bv { ex.p_true } else { ex.p_false };
-            b.ins().call(ex.printf, &[ex.fmt_s, p]);
+            ex.call_printf(b, &[ex.fmt_s, p]);
         }
         IExpr::Ident(id) => {
             if let Some(txt) = i128_last.get(id) {
@@ -793,7 +792,7 @@ fn print_expr(
                 module.define_data(idd, &dd)?;
                 let gv = module.declare_data_in_func(idd, b.func);
                 let p = b.ins().global_value(ptr_ty, gv);
-                b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                ex.call_printf(b, &[ex.fmt_s, p]);
             } else if let Some(len) = arrays.get(id) {
                 if let Some(ss) = ints.get(id) {
                     for i in 0..*len {
@@ -801,10 +800,10 @@ fn print_expr(
                         let addr = b.ins().iadd_imm(a, (i as i64) * 8);
                         let v = b.ins().load(ir::types::I64, MemFlags::new(), addr, 0);
                         let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
-                        b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                        ex.call_printf(b, &[ex.fmt_s, p]);
                         if i + 1 < *len {
                             let sp = make_data(module, b, ptr_ty, &mut 0u32, b" ")?;
-                            b.ins().call(ex.printf, &[ex.fmt_s, sp]);
+                            ex.call_printf(b, &[ex.fmt_s, sp]);
                         }
                     }
                     return Ok(());
@@ -813,7 +812,7 @@ fn print_expr(
                 let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                 let v = b.ins().load(types::I64, MemFlags::new(), a, 0);
                 let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
-                b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                ex.call_printf(b, &[ex.fmt_s, p]);
             } else if let Some(ss) = reals.get(id) {
                 let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                 let fv = b.ins().load(types::F64, MemFlags::new(), a, 0);
@@ -826,7 +825,7 @@ fn print_expr(
                     0,
                 ));
                 let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+                ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
                 let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
                     ir::StackSlotKind::ExplicitSlot,
                     64,
@@ -841,28 +840,28 @@ fn print_expr(
                         6
                     },
                 );
-                b.ins().call(ex.gcvt, &[fv, nd, p_f]);
+                ex.call_gcvt(b, &[fv, nd, p_f]);
                 let p_sel = b.ins().select(is_int, p_int, p_f);
-                b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+                ex.call_printf(b, &[ex.fmt_s, p_sel]);
             } else if let Some(ss) = bools.get(id) {
                 let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                 let v = b.ins().load(types::I8, MemFlags::new(), a, 0);
                 let z = b.ins().iconst(types::I8, 0);
                 let t = b.ins().icmp(ir::condcodes::IntCC::NotEqual, v, z);
                 let sel = b.ins().select(t, ex.p_true, ex.p_false);
-                b.ins().call(ex.printf, &[ex.fmt_s, sel]);
+                ex.call_printf(b, &[ex.fmt_s, sel]);
             } else if let Some((ss, _len)) = chars.get(id) {
                 let a = b.ins().stack_addr(ptr_ty, *ss, 0);
-                b.ins().call(ex.printf, &[ex.fmt_s, a]);
+                ex.call_printf(b, &[ex.fmt_s, a]);
             } else {
                 let z = b.ins().iconst(types::I64, 0);
                 let p = int_to_str(b, ex, ptr_ty, ex.sprintf, z);
-                b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                ex.call_printf(b, &[ex.fmt_s, p]);
             }
         }
         IExpr::Index(_name, args) => {
             if args.is_empty() {
-                b.ins().call(ex.printf, &[ex.fmt_s, ex.p_nl]);
+                ex.call_printf(b, &[ex.fmt_s, ex.p_nl]);
             } else {
                 let idxv = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                 let one = b.ins().iconst(ir::types::I64, 1);
@@ -875,7 +874,7 @@ fn print_expr(
                         let addr = b.ins().iadd(a, off);
                         let v = b.ins().load(ir::types::I64, MemFlags::new(), addr, 0);
                         let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
-                        b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                        ex.call_printf(b, &[ex.fmt_s, p]);
                     } else if let Some(ss) = reals.get(name.as_str()) {
                         let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                         let addr = b.ins().iadd(a, off);
@@ -887,7 +886,7 @@ fn print_expr(
                             0,
                         ));
                         let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                        b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+                        ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
                         let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             64,
@@ -895,15 +894,15 @@ fn print_expr(
                         ));
                         let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
                         let nd = b.ins().iconst(ir::types::I32, 6);
-                        b.ins().call(ex.gcvt, &[fv, nd, p_f]);
+                        ex.call_gcvt(b, &[fv, nd, p_f]);
                         let converted = b.ins().fcvt_from_sint(ir::types::F64, trunc);
                         let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, fv, converted);
                         let p_sel = b.ins().select(cmp, p_int, p_f);
-                        b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+                        ex.call_printf(b, &[ex.fmt_s, p_sel]);
                     } else {
                         let z = b.ins().iconst(ir::types::I64, 0);
                         let p = int_to_str(b, ex, ptr_ty, ex.sprintf, z);
-                        b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                        ex.call_printf(b, &[ex.fmt_s, p]);
                     }
                 }
             }
@@ -923,7 +922,7 @@ fn print_expr(
                     module.define_data(id, &dd)?;
                     let gv = module.declare_data_in_func(id, b.func);
                     let p = b.ins().global_value(ptr_ty, gv);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    ex.call_printf(b, &[ex.fmt_s, p]);
                     return Ok(());
                 }
             }
@@ -931,7 +930,7 @@ fn print_expr(
             match val {
                 CgVal::I64(x) => {
                     let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    ex.call_printf(b, &[ex.fmt_s, p]);
                 }
                 CgVal::F64(x) => {
                     let trunc = b.ins().fcvt_to_sint(types::I64, x);
@@ -943,7 +942,7 @@ fn print_expr(
                         0,
                     ));
                     let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                    b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+                    ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
                     let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
                         ir::StackSlotKind::ExplicitSlot,
                         64,
@@ -951,13 +950,13 @@ fn print_expr(
                     ));
                     let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
                     let nd = b.ins().iconst(types::I32, 6);
-                    b.ins().call(ex.gcvt, &[x, nd, p_f]);
+                    ex.call_gcvt(b, &[x, nd, p_f]);
                     let p_sel = b.ins().select(is_int, p_int, p_f);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+                    ex.call_printf(b, &[ex.fmt_s, p_sel]);
                 }
                 CgVal::Bool(b1) => {
                     let sel = b.ins().select(b1, ex.p_true, ex.p_false);
-                    b.ins().call(ex.printf, &[ex.fmt_s, sel]);
+                    ex.call_printf(b, &[ex.fmt_s, sel]);
                 }
             }
         }
@@ -966,7 +965,7 @@ fn print_expr(
             match val {
                 CgVal::I64(x) => {
                     let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                    ex.call_printf(b, &[ex.fmt_s, p]);
                 }
                 CgVal::F64(x) => {
                     let trunc = b.ins().fcvt_to_sint(types::I64, x);
@@ -978,7 +977,7 @@ fn print_expr(
                         0,
                     ));
                     let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                    b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+                    ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
                     let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
                         ir::StackSlotKind::ExplicitSlot,
                         64,
@@ -986,13 +985,13 @@ fn print_expr(
                     ));
                     let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
                     let nd = b.ins().iconst(types::I32, 6);
-                    b.ins().call(ex.gcvt, &[x, nd, p_f]);
+                    ex.call_gcvt(b, &[x, nd, p_f]);
                     let p_sel = b.ins().select(is_int, p_int, p_f);
-                    b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+                    ex.call_printf(b, &[ex.fmt_s, p_sel]);
                 }
                 CgVal::Bool(b1) => {
                     let sel = b.ins().select(b1, ex.p_true, ex.p_false);
-                    b.ins().call(ex.printf, &[ex.fmt_s, sel]);
+                    ex.call_printf(b, &[ex.fmt_s, sel]);
                 }
             }
         }
@@ -1015,7 +1014,7 @@ fn print_expr(
                         if let Some((ss, len)) = chars.get(id) {
                             let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                             if !chain.is_empty() {
-                                b.ins().call(ex.printf, &[ex.fmt_s, a]);
+                                ex.call_printf(b, &[ex.fmt_s, a]);
                                 return Ok(());
                             }
 
@@ -1132,7 +1131,7 @@ fn print_expr(
                                 b.ins().jump(done_copy_blk, &[]);
                                 b.switch_to_block(done_copy_blk);
 
-                                b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
+                                ex.call_printf(b, &[ex.fmt_s, tmp_ptr]);
                                 return Ok(());
                             } else if lname == "adjustl" {
                                 let idx_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
@@ -1210,7 +1209,7 @@ fn print_expr(
                                         .load(ir::types::I64, ir::MemFlags::new(), cnt_addr, 0);
                                 let p_term = b.ins().iadd(tmp_ptr, curc);
                                 b.ins().store(ir::MemFlags::new(), term_i8, p_term, 0);
-                                b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
+                                ex.call_printf(b, &[ex.fmt_s, tmp_ptr]);
                                 return Ok(());
                             } else {
                                 let idx_slot = b.create_sized_stack_slot(ir::StackSlotData::new(
@@ -1350,7 +1349,7 @@ fn print_expr(
 
                                 let p_term = b.ins().iadd(tmp_ptr, len_i64);
                                 b.ins().store(ir::MemFlags::new(), term_i8, p_term, 0);
-                                b.ins().call(ex.printf, &[ex.fmt_s, tmp_ptr]);
+                                ex.call_printf(b, &[ex.fmt_s, tmp_ptr]);
                                 return Ok(());
                             }
                         }
@@ -1374,7 +1373,7 @@ fn print_expr(
                     RetKind::I64 => {
                         if !res.is_empty() {
                             let p = int_to_str(b, ex, ptr_ty, ex.sprintf, res[0]);
-                            b.ins().call(ex.printf, &[ex.fmt_s, p]);
+                            ex.call_printf(b, &[ex.fmt_s, p]);
                         }
                     }
                     RetKind::F64 => {
@@ -1389,7 +1388,7 @@ fn print_expr(
                                 0,
                             ));
                             let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                            b.ins().call(ex.sprintf, &[p_int, ex.fmt_i64_dot0, trunc]);
+                            ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
                             let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
                                 ir::StackSlotKind::ExplicitSlot,
                                 64,
@@ -1397,9 +1396,9 @@ fn print_expr(
                             ));
                             let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
                             let nd = b.ins().iconst(ir::types::I32, 6);
-                            b.ins().call(ex.gcvt, &[x, nd, p_f]);
+                            ex.call_gcvt(b, &[x, nd, p_f]);
                             let p_sel = b.ins().select(is_int, p_int, p_f);
-                            b.ins().call(ex.printf, &[ex.fmt_s, p_sel]);
+                            ex.call_printf(b, &[ex.fmt_s, p_sel]);
                         }
                     }
                 }
@@ -1440,7 +1439,7 @@ fn gen_stmts(
                         func_meta, arrays, e,
                     )?;
                 }
-                b.ins().call(ex.printf, &[ex.fmt_s, ex.p_nl]);
+                ex.call_printf(b, &[ex.fmt_s, ex.p_nl]);
             }
             IStmt::DeclVar(kind, name, dims) => {
                 if ints.contains_key(name)
@@ -1990,7 +1989,7 @@ fn gen_stmts(
                                 0,
                             ));
                             let p = b.ins().stack_addr(ptr_ty, buf, 0);
-                            b.ins().call(ex.scanf, &[ex.fmt_i64, p]);
+                            ex.call_scanf(b, &[ex.fmt_i64, p]);
                             let val = b.ins().load(ir::types::I64, MemFlags::new(), p, 0);
                             let dst = b.ins().stack_addr(ptr_ty, *ss, 0);
                             b.ins().store(MemFlags::new(), val, dst, 0);
@@ -2001,7 +2000,7 @@ fn gen_stmts(
                                 0,
                             ));
                             let p = b.ins().stack_addr(ptr_ty, buf, 0);
-                            b.ins().call(ex.scanf, &[ex.fmt_f64, p]);
+                            ex.call_scanf(b, &[ex.fmt_f64, p]);
                             let sf = b.ins().load(ir::types::F64, MemFlags::new(), p, 0);
                             let dst = b.ins().stack_addr(ptr_ty, *ss, 0);
                             b.ins().store(MemFlags::new(), sf, dst, 0);
@@ -2012,13 +2011,13 @@ fn gen_stmts(
                                 0,
                             ));
                             let p = b.ins().stack_addr(ptr_ty, buf, 0);
-                            b.ins().call(ex.scanf, &[ex.fmt_s, p]);
+                            ex.call_scanf(b, &[ex.fmt_s, p]);
                             let v = b.ins().load(ir::types::I8, MemFlags::new(), p, 0);
                             let dst = b.ins().stack_addr(ptr_ty, *ss, 0);
                             b.ins().store(MemFlags::new(), v, dst, 0);
                         } else if let Some((ss, _len)) = chars.get(id) {
                             let dst = b.ins().stack_addr(ptr_ty, *ss, 0);
-                            b.ins().call(ex.scanf, &[ex.fmt_s, dst]);
+                            ex.call_scanf(b, &[ex.fmt_s, dst]);
                         }
                     }
                 }
@@ -2193,7 +2192,7 @@ fn gen_stmts(
                                                 let bytes = lit.as_bytes();
                                                 let litp = make_data(module, b, ptr_ty, dc, bytes)?;
                                                 let selp = b.ins().stack_addr(ptr_ty, *ss, 0);
-                                                let call = b.ins().call(ex.strcmp, &[selp, litp]);
+                                                let call = ex.call_strcmp(b, &[selp, litp]);
                                                 let res = b.inst_results(call)[0];
                                                 let zero = b.ins().iconst(ir::types::I32, 0);
                                                 let eq = b.ins().icmp(
@@ -2214,8 +2213,7 @@ fn gen_stmts(
                                                     let litp =
                                                         make_data(module, b, ptr_ty, dc, bytes)?;
                                                     let selp = b.ins().stack_addr(ptr_ty, *ss, 0);
-                                                    let call =
-                                                        b.ins().call(ex.strcmp, &[selp, litp]);
+                                                    let call = ex.call_strcmp(b, &[selp, litp]);
                                                     let res = b.inst_results(call)[0];
                                                     let zero = b.ins().iconst(ir::types::I32, 0);
                                                     let eq = b.ins().icmp(
@@ -2635,7 +2633,7 @@ impl Backend for CraneliftBackend {
                 let ptr_ty = isa.pointer_type();
                 let mut ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
                 ex.enable_caching(&mut b, ptr_ty);
-                
+
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
@@ -2799,7 +2797,7 @@ impl Backend for CraneliftBackend {
                 b.seal_block(entry);
                 let mut ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
                 ex.enable_caching(&mut b, ptr_ty);
-                
+
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();

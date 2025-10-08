@@ -49,7 +49,12 @@ fn main() -> Result<()> {
     let args = {
         let mut a = args.clone();
         if a.cmd.is_none() {
-            if let Some(first) = a.inputs.get(0) {
+            if a.inputs.len() > 1 {
+                a.cmd = Some(cli::Command::Link {
+                    inputs: a.inputs.clone(),
+                    out: a.out.clone(),
+                });
+            } else if let Some(first) = a.inputs.get(0) {
                 a.cmd = Some(cli::Command::Build {
                     input: first.clone(),
                     out: a.out.clone(),
@@ -114,6 +119,7 @@ fn main() -> Result<()> {
                 input.to_str().unwrap_or("<unknown>"),
                 &settings,
                 &empty_obj_exports,
+                false,
             );
             if !sema_errs.is_empty() {
                 let mut has_error = false;
@@ -138,7 +144,7 @@ fn main() -> Result<()> {
                 eprintln!("Error: Input file does not exist: {}", input.display());
                 std::process::exit(1);
             }
-            let art = compile_to_object(&input, &output, args.wall, args.werror, &args)?;
+            let art = compile_to_object(&input, &output, args.wall, args.werror, &args, false)?;
             println!("Wrote object: {}", art.object.display());
             if !art.has_program {
                 if !args.quiet {
@@ -172,7 +178,7 @@ fn main() -> Result<()> {
             }
         }
         cli::Command::EmitObj { input, out } => {
-            let art = compile_to_object(&input, &out, args.wall, args.werror, &args)?;
+            let art = compile_to_object(&input, &out, args.wall, args.werror, &args, false)?;
             if !args.quiet {
                 println!("Wrote object: {}", art.object.display());
             }
@@ -208,6 +214,7 @@ fn main() -> Result<()> {
                 input.to_str().unwrap_or("<unknown>"),
                 &settings,
                 &empty_obj_exports,
+                false,
             );
             if !sema_errs.is_empty() {
                 for e in &sema_errs {
@@ -217,6 +224,7 @@ fn main() -> Result<()> {
             runtime::interpret(&program);
         }
         cli::Command::Link { inputs, out } => {
+            // Step 1: Compile all .f90 files to .obj files
             let mut artifacts = Vec::new();
             for inp in inputs {
                 if inp
@@ -226,7 +234,10 @@ fn main() -> Result<()> {
                     .unwrap_or(false)
                 {
                     let obj_out = utils::default_object_output_path(&inp);
-                    let art = compile_to_object(&inp, &obj_out, args.wall, args.werror, &args)?;
+                    println!("Compiling: {}", inp.display());
+                    let art =
+                        compile_to_object(&inp, &obj_out, args.wall, args.werror, &args, true)?;
+                    println!("  -> {}", obj_out.display());
                     artifacts.push(art);
                 } else {
                     artifacts.push(BuildArtifact {
@@ -238,7 +249,9 @@ fn main() -> Result<()> {
                     });
                 }
             }
+
             compute_link_deps(&mut artifacts);
+
             let mut objects: Vec<std::path::PathBuf> = Vec::new();
             let mut seen = std::collections::HashSet::new();
             for art in &artifacts {
@@ -251,6 +264,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
+
             let exe_out = if let Some(o) = out {
                 o
             } else {
@@ -267,6 +281,8 @@ fn main() -> Result<()> {
                     p
                 }
             };
+
+            println!("Linking {} object files...", objects.len());
             link_executable(&objects, &exe_out, args.lto)?;
             if !args.quiet {
                 println!("Linked: {}", exe_out.display());
@@ -285,6 +301,7 @@ fn compile_to_object(
     wall: bool,
     werror: bool,
     args: &cli::Cli,
+    allow_undefined: bool,
 ) -> Result<BuildArtifact> {
     let src = utils::read_file_to_string(input)?;
     let tokens = lexer::lex(&src);
@@ -310,10 +327,14 @@ fn compile_to_object(
         input.to_str().unwrap_or("<unknown>"),
         &settings,
         &empty_obj_exports,
+        allow_undefined,
     );
     if !sema_errs.is_empty() {
         let mut has_error = false;
         for e in &sema_errs {
+            if allow_undefined && e.message.contains("undefined") {
+                continue;
+            }
             eprintln!("{}", e);
             if matches!(e.kind, crate::errors::CompileErrorKind::Semantic) {
                 has_error = true;
