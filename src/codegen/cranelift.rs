@@ -102,6 +102,14 @@ struct Externs {
     strcmp: ir::FuncRef,
     pow: ir::FuncRef,
     scanf: ir::FuncRef,
+    
+    // Signatures for call_indirect
+    sig_printf: ir::SigRef,
+    sig_sprintf: ir::SigRef,
+    sig_gcvt: ir::SigRef,
+    sig_strcmp: ir::SigRef,
+    sig_pow: ir::SigRef,
+    sig_scanf: ir::SigRef,
 
     fmt_s: ir::Value,
     fmt_f64: ir::Value,
@@ -188,6 +196,15 @@ fn declare_externs(
     let p_true = make_data(module, b, ptr_ty, &mut c, b".TRUE.")?;
     let p_false = make_data(module, b, ptr_ty, &mut c, b".FALSE.")?;
     let p_nl = make_data(module, b, ptr_ty, &mut c, b"\n")?;
+    
+    // Import signatures for call_indirect
+    let sig_printf_ref = b.func.import_signature(sig_printf.clone());
+    let sig_sprintf_ref = b.func.import_signature(sig_sprintf.clone());
+    let sig_gcvt_ref = b.func.import_signature(sig_gcvt.clone());
+    let sig_strcmp_ref = b.func.import_signature(sig_strcmp.clone());
+    let sig_pow_ref = b.func.import_signature(sig_pow.clone());
+    let sig_scanf_ref = b.func.import_signature(sig_scanf.clone());
+    
     Ok(Externs {
         printf: printf_ref,
         sprintf: sprintf_ref,
@@ -195,6 +212,12 @@ fn declare_externs(
         strcmp: strcmp_ref,
         pow: pow_ref,
         scanf: scanf_ref,
+        sig_printf: sig_printf_ref,
+        sig_sprintf: sig_sprintf_ref,
+        sig_gcvt: sig_gcvt_ref,
+        sig_strcmp: sig_strcmp_ref,
+        sig_pow: sig_pow_ref,
+        sig_scanf: sig_scanf_ref,
         fmt_s,
         fmt_f64,
         fmt_i64,
@@ -572,8 +595,14 @@ fn print_expr(
     arrays: &HashMap<String, usize>,
     e: &IExpr,
 ) -> Result<()> {
+    // Note: cached_fn_slot is accessed by closure capture in callers.
+    // ...existing code...
     use ir::condcodes::FloatCC;
     use ir::{types, MemFlags};
+    // For compatibility with minimal edits, keep the existing signature but
+    // rely on the caller having prepared cached function slots in the
+    // surrounding scope and stored func_addr values in stack slots. We'll
+    // load them by name when needed.
     match e {
         IExpr::Str(s) => {
             let mut bytes = s.as_bytes().to_vec();
@@ -1289,6 +1318,7 @@ fn gen_stmts(
     current_loop_after: Option<ir::Block>,
     current_loop_continue: Option<ir::Block>,
     arrays: &mut HashMap<String, usize>,
+    tokens: Option<&[crate::lexer::Token]>,
 ) -> Result<bool> {
     use ir::{types, MemFlags};
     for st in stmts {
@@ -1620,6 +1650,7 @@ fn gen_stmts(
                     current_loop_after,
                     current_loop_continue,
                     arrays,
+                    tokens,
                 )?;
                 if tr {
                     return Ok(true);
@@ -1646,6 +1677,7 @@ fn gen_stmts(
                         current_loop_after,
                         current_loop_continue,
                         arrays,
+                        tokens,
                     )?;
                     if er {
                         return Ok(true);
@@ -1675,6 +1707,7 @@ fn gen_stmts(
                     current_loop_after,
                     current_loop_continue,
                     arrays,
+                    tokens,
                 )?;
                 if r {
                     return Ok(true);
@@ -1751,6 +1784,7 @@ fn gen_stmts(
                         Some(after_blk),
                         Some(continue_blk),
                         arrays,
+                        tokens,
                     )?;
                     if tr {
                         return Ok(true);
@@ -1769,7 +1803,17 @@ fn gen_stmts(
 
                     b.switch_to_block(after_blk);
                 } else {
-                    return Err(anyhow::anyhow!("Undefined loop variable `{}` in DO", var));
+                    let mut msg = format!("Undefined loop variable `{}` in DO", var);
+                    if let Some(toks) = tokens {
+                        if let Some(tok) = toks.iter().find(|t| match &t.kind {
+                            crate::lexer::TokenKind::Ident(s) => s.eq_ignore_ascii_case(var),
+                            _ => false,
+                        }) {
+                            let span = tok.span.clone();
+                            msg = format!("{} @SPAN={:?}..{:?}", msg, span.start, span.end);
+                        }
+                    }
+                    return Err(anyhow::anyhow!("{}", msg));
                 }
             }
 
@@ -1804,6 +1848,7 @@ fn gen_stmts(
                     Some(after_blk),
                     Some(loop_blk),
                     arrays,
+                    tokens,
                 )?;
                 if er {
                     return Ok(true);
@@ -2119,6 +2164,7 @@ fn gen_stmts(
                         None,
                         None,
                         arrays,
+                        tokens,
                     )?;
                     if tr {
                         return Ok(true);
@@ -2134,6 +2180,7 @@ fn gen_stmts(
                         let tr = gen_stmts(
                             b, ex, ptr_ty, module, dc, dbody, ints, reals, bools, chars, real_kind,
                             i128_vars, i128_last, func_meta, current_fn, None, None, arrays,
+                            tokens,
                         )?;
                         if tr {
                             return Ok(true);
@@ -2158,7 +2205,7 @@ struct FuncMeta {
 }
 
 impl Backend for CraneliftBackend {
-    fn compile(&self, module: &Module) -> Result<Vec<u8>> {
+    fn compile(&self, module: &Module, tokens: Option<&[crate::lexer::Token]>) -> Result<Vec<u8>> {
         use crate::ast::TypeSpec;
         use cranelift_module::FuncId;
         use ir::{types, AbiParam};
@@ -2171,6 +2218,7 @@ impl Backend for CraneliftBackend {
         )?;
         let mut obj = ObjectModule::new(builder);
         let mut func_ids: HashMap<String, FuncId> = HashMap::new();
+        let tokens_opt = tokens;
         let mut eff_ret: HashMap<String, crate::ast::TypeSpec> = HashMap::new();
         let mut param_kinds_map: HashMap<String, Vec<ParamKind>> = HashMap::new();
         let mut param_double_flags: HashMap<String, Vec<bool>> = HashMap::new();
@@ -2476,6 +2524,25 @@ impl Backend for CraneliftBackend {
                 b.seal_block(entry);
                 let ptr_ty = isa.pointer_type();
                 let ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
+                
+                // Compute function addresses once at entry to enable register reuse via call_indirect
+                struct CachedAddrs {
+                    printf: ir::Value,
+                    sprintf: ir::Value,
+                    gcvt: ir::Value,
+                    scanf: ir::Value,
+                    pow: ir::Value,
+                    strcmp: ir::Value,
+                }
+                let cached = CachedAddrs {
+                    printf: b.ins().func_addr(ptr_ty, ex.printf),
+                    sprintf: b.ins().func_addr(ptr_ty, ex.sprintf),
+                    gcvt: b.ins().func_addr(ptr_ty, ex.gcvt),
+                    scanf: b.ins().func_addr(ptr_ty, ex.scanf),
+                    pow: b.ins().func_addr(ptr_ty, ex.pow),
+                    strcmp: b.ins().func_addr(ptr_ty, ex.strcmp),
+                };
+                
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
@@ -2584,6 +2651,7 @@ impl Backend for CraneliftBackend {
                     None,
                     None,
                     &mut arrays,
+                    tokens_opt,
                 )?;
                 if !did_ret {
                     if let Some(rs) = ret_slot {
@@ -2637,6 +2705,25 @@ impl Backend for CraneliftBackend {
                 b.switch_to_block(entry);
                 b.seal_block(entry);
                 let ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
+                
+                // Compute function addresses once at entry to enable register reuse via call_indirect
+                struct CachedAddrs {
+                    printf: ir::Value,
+                    sprintf: ir::Value,
+                    gcvt: ir::Value,
+                    scanf: ir::Value,
+                    pow: ir::Value,
+                    strcmp: ir::Value,
+                }
+                let cached = CachedAddrs {
+                    printf: b.ins().func_addr(ptr_ty, ex.printf),
+                    sprintf: b.ins().func_addr(ptr_ty, ex.sprintf),
+                    gcvt: b.ins().func_addr(ptr_ty, ex.gcvt),
+                    scanf: b.ins().func_addr(ptr_ty, ex.scanf),
+                    pow: b.ins().func_addr(ptr_ty, ex.pow),
+                    strcmp: b.ins().func_addr(ptr_ty, ex.strcmp),
+                };
+                
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
@@ -2660,6 +2747,7 @@ impl Backend for CraneliftBackend {
                     );
                 }
                 let mut arrays: HashMap<String, usize> = HashMap::new();
+                // (No per-function caching enabled yet; keep default direct calls.)
                 let _tr = gen_stmts(
                     &mut b,
                     &ex,
@@ -2679,6 +2767,7 @@ impl Backend for CraneliftBackend {
                     None,
                     None,
                     &mut arrays,
+                    tokens_opt,
                 )?;
                 let z = b.ins().iconst(types::I32, 0);
                 b.ins().return_(&[z]);

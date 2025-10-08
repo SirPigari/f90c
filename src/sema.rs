@@ -2113,25 +2113,4 @@ pub fn analyze_with_src(
     errors
 }
 
-pub fn analyze_with_src_ext(
-    program: &Program,
-    src: &str,
-    tokens: &[Token],
-    filename: &str,
-    settings: &SemaSettings,
-    external_funcs: &std::collections::HashSet<String>,
-    linked_obj_exports: &HashSet<String>,
-) -> Vec<CompileError> {
-    let mut errs = analyze_with_src(program, src, tokens, filename, settings, linked_obj_exports);
-    errs.retain(|e| {
-        let msg = &e.message;
-        if let Some(rest) = msg.strip_prefix("undefined function or subroutine `") {
-            if let Some(name_part) = rest.strip_suffix("`") {
-                let lname = name_part.to_ascii_lowercase();
-                return !external_funcs.contains(&lname);
-            }
-        }
-        true
-    });
-    errs
-}
+// analyze_with_src_ext removed — prescan logic no longer calls this helper.

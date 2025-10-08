@@ -20,6 +20,7 @@ lazy_static = "1"
 smallvec = "1"
 lalrpop-util = { version = "0.22.2", default-features = false, features = ["lexer"] }
 uuid = { version = "1.18.0", features = ["v4"] }
+which = "8.0.0"
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

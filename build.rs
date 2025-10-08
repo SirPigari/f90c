@@ -12,7 +12,7 @@ fn main() {
     let mut bundle_files: Vec<&str> = vec![];
 
     if cfg!(windows) {
-        bundle_files.extend(["lld-link.exe"]);
+        bundle_files.extend(["lld-link.exe", "objdump.exe"]);
     } else {
         bundle_files.extend(["ld.lld", "libc++.so", "libLLVM-20.so"]);
     }

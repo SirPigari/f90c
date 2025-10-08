@@ -56,6 +56,13 @@ pub struct Cli {
     #[structopt(long = "debug-ir", help = "Show IR before and after optimizations")]
     pub debug_ir: bool,
 
+    #[structopt(
+        short = "S",
+        long = "emit-asm",
+        help = "Print generated assembly for the object file"
+    )]
+    pub emit_asm: bool,
+
     #[structopt(long = "help", short = "h", help = "Show this help message")]
     pub help: bool,
 

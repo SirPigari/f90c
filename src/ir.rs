@@ -88,7 +88,6 @@ pub struct LowerOutput {
     pub defines_modules: Vec<String>,
     pub uses_modules: Vec<String>,
     pub has_program: bool,
-    pub module_only: bool,
 }
 
 use crate::ast::{Expr, Program, Stmt};
@@ -423,11 +422,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             _ => {}
         }
     }
-    let module_only = !program.body.is_empty()
-        && program
-            .body
-            .iter()
-            .all(|s| matches!(s, Stmt::Module { .. }));
+    // module_only no longer stored in LowerOutput; keep local check removed.
     let has_program = program.name != "<anon>";
 
     // Constant folding helper: evaluate binary operations on constant values
@@ -2493,18 +2488,24 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     let mut pre_fm = final_module.clone();
     for func in &mut pre_fm.funcs {
         // collect single-assigned string variables
-        let mut assign_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        let mut str_assigns: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut assign_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut str_assigns: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for st in &func.body {
             match st {
                 IStmt::AssignStr(v, val) => {
                     *assign_counts.entry(v.clone()).or_default() += 1;
                     str_assigns.insert(v.clone(), val.clone());
                 }
-                IStmt::AssignExpr(v, _) | IStmt::AssignIdent(v, _) | IStmt::AssignIndex(v, _, _) => {
+                IStmt::AssignExpr(v, _)
+                | IStmt::AssignIdent(v, _)
+                | IStmt::AssignIndex(v, _, _) => {
                     *assign_counts.entry(v.clone()).or_default() += 1;
                 }
-                IStmt::AssignIntLit(v, _) | IStmt::AssignRealLit(v, _) | IStmt::AssignBool(v, _) => {
+                IStmt::AssignIntLit(v, _)
+                | IStmt::AssignRealLit(v, _)
+                | IStmt::AssignBool(v, _) => {
                     *assign_counts.entry(v.clone()).or_default() += 1;
                 }
                 _ => {}
@@ -2676,7 +2677,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     defines_modules,
                     uses_modules,
                     has_program,
-                    module_only,
                 });
             }
         }
@@ -2687,7 +2687,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         defines_modules,
         uses_modules,
         has_program,
-        module_only,
     })
 }
 
