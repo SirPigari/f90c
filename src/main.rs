@@ -456,7 +456,7 @@ fn compile_to_object(
             {
                 println!("\n=== ASSEMBLY (via objdump) ===\n");
                 let s = String::from_utf8_lossy(&o.stdout);
-                println!("{}", s);
+                println!("{}", s.replace(",", ", ")); // formate it nicely
                 printed = true;
             }
         } else {

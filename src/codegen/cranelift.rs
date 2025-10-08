@@ -102,14 +102,22 @@ struct Externs {
     strcmp: ir::FuncRef,
     pow: ir::FuncRef,
     scanf: ir::FuncRef,
-    
-    // Signatures for call_indirect
-    sig_printf: ir::SigRef,
-    sig_sprintf: ir::SigRef,
-    sig_gcvt: ir::SigRef,
-    sig_strcmp: ir::SigRef,
-    sig_pow: ir::SigRef,
-    sig_scanf: ir::SigRef,
+
+    // Cached function addresses for reducing movabs instructions
+    printf_addr: Option<ir::Value>,
+    sprintf_addr: Option<ir::Value>,
+    gcvt_addr: Option<ir::Value>,
+    scanf_addr: Option<ir::Value>,
+    pow_addr: Option<ir::Value>,
+    strcmp_addr: Option<ir::Value>,
+
+    // Signatures for call_indirect when caching is enabled
+    sig_printf: Option<ir::SigRef>,
+    sig_sprintf: Option<ir::SigRef>,
+    sig_gcvt: Option<ir::SigRef>,
+    sig_strcmp: Option<ir::SigRef>,
+    sig_pow: Option<ir::SigRef>,
+    sig_scanf: Option<ir::SigRef>,
 
     fmt_s: ir::Value,
     fmt_f64: ir::Value,
@@ -197,14 +205,6 @@ fn declare_externs(
     let p_false = make_data(module, b, ptr_ty, &mut c, b".FALSE.")?;
     let p_nl = make_data(module, b, ptr_ty, &mut c, b"\n")?;
     
-    // Import signatures for call_indirect
-    let sig_printf_ref = b.func.import_signature(sig_printf.clone());
-    let sig_sprintf_ref = b.func.import_signature(sig_sprintf.clone());
-    let sig_gcvt_ref = b.func.import_signature(sig_gcvt.clone());
-    let sig_strcmp_ref = b.func.import_signature(sig_strcmp.clone());
-    let sig_pow_ref = b.func.import_signature(sig_pow.clone());
-    let sig_scanf_ref = b.func.import_signature(sig_scanf.clone());
-    
     Ok(Externs {
         printf: printf_ref,
         sprintf: sprintf_ref,
@@ -212,12 +212,18 @@ fn declare_externs(
         strcmp: strcmp_ref,
         pow: pow_ref,
         scanf: scanf_ref,
-        sig_printf: sig_printf_ref,
-        sig_sprintf: sig_sprintf_ref,
-        sig_gcvt: sig_gcvt_ref,
-        sig_strcmp: sig_strcmp_ref,
-        sig_pow: sig_pow_ref,
-        sig_scanf: sig_scanf_ref,
+        printf_addr: None,
+        sprintf_addr: None,
+        gcvt_addr: None,
+        scanf_addr: None,
+        pow_addr: None,
+        strcmp_addr: None,
+        sig_printf: None,
+        sig_sprintf: None,
+        sig_gcvt: None,
+        sig_strcmp: None,
+        sig_pow: None,
+        sig_scanf: None,
         fmt_s,
         fmt_f64,
         fmt_i64,
@@ -227,6 +233,110 @@ fn declare_externs(
         p_nl,
     })
 }
+
+impl Externs {
+    fn enable_caching(&mut self, b: &mut FunctionBuilder, ptr_ty: ir::Type) {
+        use ir::{types, AbiParam, Signature};
+        let cc = b.func.signature.call_conv;
+        
+        // Compute function addresses once
+        self.printf_addr = Some(b.ins().func_addr(ptr_ty, self.printf));
+        self.sprintf_addr = Some(b.ins().func_addr(ptr_ty, self.sprintf));
+        self.gcvt_addr = Some(b.ins().func_addr(ptr_ty, self.gcvt));
+        self.scanf_addr = Some(b.ins().func_addr(ptr_ty, self.scanf));
+        self.pow_addr = Some(b.ins().func_addr(ptr_ty, self.pow));
+        self.strcmp_addr = Some(b.ins().func_addr(ptr_ty, self.strcmp));
+        
+        // Import signatures for call_indirect
+        let mut sig_printf = Signature::new(cc);
+        sig_printf.params.push(AbiParam::new(ptr_ty));
+        sig_printf.params.push(AbiParam::new(ptr_ty));
+        sig_printf.returns.push(AbiParam::new(types::I32));
+        self.sig_printf = Some(b.func.import_signature(sig_printf));
+        
+        let mut sig_sprintf = Signature::new(cc);
+        sig_sprintf.params.push(AbiParam::new(ptr_ty));
+        sig_sprintf.params.push(AbiParam::new(ptr_ty));
+        sig_sprintf.params.push(AbiParam::new(types::I64));
+        sig_sprintf.returns.push(AbiParam::new(types::I32));
+        self.sig_sprintf = Some(b.func.import_signature(sig_sprintf));
+        
+        let mut sig_gcvt = Signature::new(cc);
+        sig_gcvt.params.push(AbiParam::new(types::F64));
+        sig_gcvt.params.push(AbiParam::new(types::I32));
+        sig_gcvt.params.push(AbiParam::new(ptr_ty));
+        sig_gcvt.returns.push(AbiParam::new(ptr_ty));
+        self.sig_gcvt = Some(b.func.import_signature(sig_gcvt));
+        
+        let mut sig_pow = Signature::new(cc);
+        sig_pow.params.push(AbiParam::new(types::F64));
+        sig_pow.params.push(AbiParam::new(types::F64));
+        sig_pow.returns.push(AbiParam::new(types::F64));
+        self.sig_pow = Some(b.func.import_signature(sig_pow));
+        
+        let mut sig_scanf = Signature::new(cc);
+        sig_scanf.params.push(AbiParam::new(ptr_ty));
+        sig_scanf.params.push(AbiParam::new(ptr_ty));
+        sig_scanf.returns.push(AbiParam::new(types::I32));
+        self.sig_scanf = Some(b.func.import_signature(sig_scanf));
+        
+        let mut sig_strcmp = Signature::new(cc);
+        sig_strcmp.params.push(AbiParam::new(ptr_ty));
+        sig_strcmp.params.push(AbiParam::new(ptr_ty));
+        sig_strcmp.returns.push(AbiParam::new(types::I32));
+        self.sig_strcmp = Some(b.func.import_signature(sig_strcmp));
+    }
+    
+    // Helper methods to call functions using cached addresses when available
+    fn call_printf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.printf_addr, self.sig_printf) {
+            b.ins().call_indirect(sig, addr, args)
+        } else {
+            b.ins().call(self.printf, args)
+        }
+    }
+    
+    fn call_sprintf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.sprintf_addr, self.sig_sprintf) {
+            b.ins().call_indirect(sig, addr, args)
+        } else {
+            b.ins().call(self.sprintf, args)
+        }
+    }
+    
+    fn call_gcvt(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.gcvt_addr, self.sig_gcvt) {
+            b.ins().call_indirect(sig, addr, args)
+        } else {
+            b.ins().call(self.gcvt, args)
+        }
+    }
+    
+    fn call_scanf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.scanf_addr, self.sig_scanf) {
+            b.ins().call_indirect(sig, addr, args)
+        } else {
+            b.ins().call(self.scanf, args)
+        }
+    }
+    
+    fn call_pow(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.pow_addr, self.sig_pow) {
+            b.ins().call_indirect(sig, addr, args)
+        } else {
+            b.ins().call(self.pow, args)
+        }
+    }
+    
+    fn call_strcmp(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.strcmp_addr, self.sig_strcmp) {
+            b.ins().call_indirect(sig, addr, args)
+        } else {
+            b.ins().call(self.strcmp, args)
+        }
+    }
+}
+
 
 fn int_to_str(
     b: &mut FunctionBuilder,
@@ -2523,25 +2633,8 @@ impl Backend for CraneliftBackend {
                 b.switch_to_block(entry);
                 b.seal_block(entry);
                 let ptr_ty = isa.pointer_type();
-                let ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
-                
-                // Compute function addresses once at entry to enable register reuse via call_indirect
-                struct CachedAddrs {
-                    printf: ir::Value,
-                    sprintf: ir::Value,
-                    gcvt: ir::Value,
-                    scanf: ir::Value,
-                    pow: ir::Value,
-                    strcmp: ir::Value,
-                }
-                let cached = CachedAddrs {
-                    printf: b.ins().func_addr(ptr_ty, ex.printf),
-                    sprintf: b.ins().func_addr(ptr_ty, ex.sprintf),
-                    gcvt: b.ins().func_addr(ptr_ty, ex.gcvt),
-                    scanf: b.ins().func_addr(ptr_ty, ex.scanf),
-                    pow: b.ins().func_addr(ptr_ty, ex.pow),
-                    strcmp: b.ins().func_addr(ptr_ty, ex.strcmp),
-                };
+                let mut ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
+                ex.enable_caching(&mut b, ptr_ty);
                 
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
@@ -2704,25 +2797,8 @@ impl Backend for CraneliftBackend {
                 b.append_block_params_for_function_params(entry);
                 b.switch_to_block(entry);
                 b.seal_block(entry);
-                let ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
-                
-                // Compute function addresses once at entry to enable register reuse via call_indirect
-                struct CachedAddrs {
-                    printf: ir::Value,
-                    sprintf: ir::Value,
-                    gcvt: ir::Value,
-                    scanf: ir::Value,
-                    pow: ir::Value,
-                    strcmp: ir::Value,
-                }
-                let cached = CachedAddrs {
-                    printf: b.ins().func_addr(ptr_ty, ex.printf),
-                    sprintf: b.ins().func_addr(ptr_ty, ex.sprintf),
-                    gcvt: b.ins().func_addr(ptr_ty, ex.gcvt),
-                    scanf: b.ins().func_addr(ptr_ty, ex.scanf),
-                    pow: b.ins().func_addr(ptr_ty, ex.pow),
-                    strcmp: b.ins().func_addr(ptr_ty, ex.strcmp),
-                };
+                let mut ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
+                ex.enable_caching(&mut b, ptr_ty);
                 
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();

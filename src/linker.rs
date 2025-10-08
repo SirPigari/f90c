@@ -54,10 +54,12 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         let mut v = vec![format!("/OUT:{}", out.display())];
 
         for obj in objects {
+            println!("[link] adding {}", obj.display());
             v.push(obj.display().to_string());
         }
 
         if lto {
+            println!("[link] enabling LTO");
             v.push("/LTCG".into());
         }
 
@@ -68,10 +70,12 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         let mut v = vec!["-o".into(), out.display().to_string()];
 
         if lto {
+            println!("[link] enabling LTO");
             v.push("-flto".into());
         }
 
         for obj in objects {
+            println!("[link] adding {}", obj.display());
             v.push(obj.display().to_string());
         }
 
@@ -91,6 +95,8 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         args.push("legacy_stdio_definitions.lib".into());
         args.push("kernel32.lib".into());
     }
+
+    println!("[link] invoking linker {}", env!("LINKER_VERSION"));
 
     let status = Command::new(&linker_path)
         .args(&args)
