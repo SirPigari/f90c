@@ -14,6 +14,30 @@ struct Expectation {
     program_exit_code: i32,
 }
 
+impl Expectation {
+    fn normalize(&self) -> Self {
+        let mut norm = self.clone();
+
+        // Normalize line endings to \n
+        norm.compiler_stderr = norm.compiler_stderr.replace("\r\n", "\n");
+        norm.program_stdout = norm.program_stdout.replace("\r\n", "\n");
+        norm.program_stderr = norm.program_stderr.replace("\r\n", "\n");
+
+        // Trim trailing whitespace lines
+        while norm.compiler_stderr.ends_with('\n') {
+            norm.compiler_stderr.pop();
+        }
+        while norm.program_stdout.ends_with('\n') {
+            norm.program_stdout.pop();
+        }
+        while norm.program_stderr.ends_with('\n') {
+            norm.program_stderr.pop();
+        }
+
+        norm
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Debug)]
 struct AllExpectations {
     cases: HashMap<String, Expectation>,
@@ -77,7 +101,7 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
     let mut comp_cmd = Command::new(f90c);
     if !link_files.is_empty() {
         for link_path in &link_files {
-            let obj_name = link_path.with_extension("obj");
+            let obj_name = link_path.with_extension(if cfg!(windows) { "obj" } else { "o" });
             comp_cmd.arg(obj_name);
         }
     }
@@ -191,7 +215,8 @@ fn process_case(
         println!("[recorded] {}", stem);
         *changed = true;
     } else {
-        let exp = all.cases.get(stem).unwrap();
+        let exp = all.cases.get(stem).unwrap().normalize();
+        let got = got.normalize();
 
         // If compilation failed, always show the error output
         if got.compiler_exit_code != 0 {
@@ -209,7 +234,7 @@ fn process_case(
             return;
         }
 
-        if exp != &got {
+        if exp != got {
             println!("---- {} ----", stem);
             if exp.compiler_exit_code != got.compiler_exit_code {
                 println!(

@@ -8,17 +8,35 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
 
     let bin_dir = manifest_dir.join("src").join("bin");
+    let lib_dir = manifest_dir.join("src").join("libs").join(if cfg!(target_pointer_width = "64") { "x64" } else { "x86" });
 
-    let mut bundle_files: Vec<&str> = vec![];
+    let mut bundle_files_bin: Vec<&str> = vec![];
+    let mut bundle_files_lib: Vec<&str> = vec![];
 
     if cfg!(windows) {
-        bundle_files.extend(["lld-link.exe", "objdump.exe"]);
+        bundle_files_bin.extend(["lld-link.exe", "objdump.exe"]);
+        bundle_files_lib.extend(["kernel32.lib", "legacy_stdio_definitions.lib", "msvcrt.lib"]);
     } else {
-        bundle_files.extend(["ld.lld", "libc++.so", "libLLVM-20.so"]);
+        bundle_files_bin.extend(["ld.lld"]);
+        bundle_files_lib.extend(["libc++.so", "libLLVM-20.so", "patch.o"]);
     }
 
-    for file_name in bundle_files {
+    for file_name in bundle_files_bin {
         let src_path = bin_dir.join(file_name);
+        let dest_path = out_dir.join(file_name);
+
+        fs::copy(&src_path, &dest_path).unwrap_or_else(|_| {
+            panic!(
+                "Failed to copy {} to {}",
+                src_path.display(),
+                dest_path.display()
+            )
+        });
+
+        println!("cargo:rerun-if-changed={}", src_path.display());
+    }
+    for file_name in bundle_files_lib {
+        let src_path = lib_dir.join(file_name);
         let dest_path = out_dir.join(file_name);
 
         fs::copy(&src_path, &dest_path).unwrap_or_else(|_| {
