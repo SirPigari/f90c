@@ -8,7 +8,15 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
 
     let bin_dir = manifest_dir.join("src").join("bin");
-    let lib_dir = manifest_dir.join("src").join("libs").join(if cfg!(target_pointer_width = "64") { "x64" } else { "x86" });
+    let lib_dir =
+        manifest_dir
+            .join("src")
+            .join("libs")
+            .join(if cfg!(target_pointer_width = "64") {
+                "x64"
+            } else {
+                "x86"
+            });
 
     let mut bundle_files_bin: Vec<&str> = vec![];
     let mut bundle_files_lib: Vec<&str> = vec![];

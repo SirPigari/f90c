@@ -983,7 +983,9 @@ pub fn interpret(program: &Program) {
                 }
                 Stmt::Function { .. } | Stmt::Subroutine { .. } => {}
                 Stmt::Use { .. } | Stmt::Module { .. } => {}
-                Stmt::ImplicitNone => {}
+                Stmt::Implicit(_) => {
+                    // Implicit statements are handled during semantic analysis
+                }
                 Stmt::Block { body } => {
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {
                         return Some(ret);

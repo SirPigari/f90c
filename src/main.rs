@@ -1,3 +1,4 @@
+use crate::cli::Cli;
 use crate::codegen::Backend;
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};
@@ -31,7 +32,7 @@ struct BuildArtifact {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let args = cli::Cli::from_args();
+    let args = cli::Cli::from_args().normalize();
 
     if args.help {
         utils::print_help();
@@ -46,38 +47,50 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let args = {
-        let mut a = args.clone();
-        if a.cmd.is_none() {
-            if a.inputs.len() > 1 {
-                a.cmd = Some(cli::Command::Link {
-                    inputs: a.inputs.clone(),
-                    out: a.out.clone(),
-                });
-            } else if let Some(first) = a.inputs.get(0) {
-                a.cmd = Some(cli::Command::Build {
-                    input: first.clone(),
-                    out: a.out.clone(),
-                    run: false,
-                });
-            }
-        }
-        a
-    };
-
     match args.cmd.clone().unwrap_or(cli::Command::Help) {
-        cli::Command::Lex { input } => {
+        cli::Command::Lex { input, out } => {
             let src = utils::read_file_to_string(&input)?;
             let tokens = lexer::lex(&src);
-            for t in tokens {
-                println!("{:?}", t);
+            let mut serialized = String::new();
+            let mut longest_token = 0;
+            for t in &tokens {
+                let len = format!("{:?}", t.kind).len();
+                if len > longest_token {
+                    longest_token = len;
+                }
+            }
+            for t in &tokens {
+                let token_str = format!("{:?}", t.kind);
+                let padding = " ".repeat(longest_token - token_str.len());
+                serialized.push_str(&format!(
+                    "{}{} | @ {}..{}\n",
+                    token_str, padding, t.span.start, t.span.end
+                ));
+            }
+            if let Some(out_path) = out {
+                std::fs::write(&out_path, serialized)?;
+                if !args.quiet {
+                    println!("Wrote tokens to {}", out_path.display());
+                }
+            } else {
+                println!("{}", serialized);
             }
         }
-        cli::Command::Parse { input } => {
+        cli::Command::Parse { input, out } => {
             let src = utils::read_file_to_string(&input)?;
             let tokens = lexer::lex(&src);
             match parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>")) {
-                Ok(p) => println!("{:#?}", p),
+                Ok(p) => {
+                    if let Some(out_path) = out {
+                        let serialized = serde_json::to_string_pretty(&p)?;
+                        std::fs::write(&out_path, serialized)?;
+                        if !args.quiet {
+                            println!("Wrote AST to {}", out_path.display());
+                        }
+                    } else {
+                        println!("{:#?}", p);
+                    }
+                }
                 Err(errs) => {
                     for e in errs {
                         eprintln!("{}", e);
@@ -139,22 +152,26 @@ fn main() -> Result<()> {
         }
         cli::Command::Build { input, out, run } => {
             let output = utils::default_object_output_path(&input);
-            println!("Compiling file: {}", input.display());
+            if !args.quiet {
+                println!("Compiling file: {}", input.display());
+            }
             if !input.exists() {
                 eprintln!("Error: Input file does not exist: {}", input.display());
                 std::process::exit(1);
             }
             let art = compile_to_object(&input, &output, args.wall, args.werror, &args, false)?;
-            println!("Wrote object: {}", art.object.display());
+            if !args.quiet {
+                println!("Wrote object: {}", art.object.display());
+            }
             if !art.has_program {
-                if !args.quiet {
-                    println!("No PROGRAM unit found; emitted object file only.");
-                }
+                println!("No PROGRAM unit found; emitted object file only.");
                 return Ok(());
             }
             let exe_out = out.unwrap_or_else(|| utils::default_exe_output_path(&input));
-            link_executable(&[art.object.clone()], &exe_out, args.lto)?;
-            println!("Linked: {}", exe_out.display());
+            link_executable(&[art.object.clone()], &exe_out, &args)?;
+            if !args.quiet {
+                println!("Linked: {}", exe_out.display());
+            }
             let path = exe_out.canonicalize().unwrap();
             let mut path_str = path.display().to_string();
             if path_str.starts_with(r"\\?\") {
@@ -162,19 +179,27 @@ fn main() -> Result<()> {
             }
             path_str = path_str.replace("\\", "/");
             let file_size = utils::file_size(&exe_out)?;
-            println!(
-                "Compiled {} to '{}' , [{} BYTES, {}]",
-                exe_out.display(),
-                path_str,
-                file_size,
-                utils::format_bytes(file_size)
-            );
+            if !args.quiet {
+                println!(
+                    "Compiled {} to '{}', [{} BYTES, {}]",
+                    exe_out.display(),
+                    path_str,
+                    file_size,
+                    utils::format_bytes(file_size)
+                );
+            } else {
+                println!("Successfully compiled to {}", path_str);
+            }
             if run {
-                println!("Running executable: {}", exe_out.display());
-                println!("-----------------------------------------");
+                if !args.quiet {
+                    println!("Running executable: {}", exe_out.display());
+                    println!("-----------------------------------------");
+                }
                 let code = runtime::run_executable(&exe_out);
-                println!("-----------------------------------------");
-                println!("{} exited with code {}", exe_out.display(), code);
+                if !args.quiet {
+                    println!("-----------------------------------------");
+                    println!("{} exited with code {}", exe_out.display(), code);
+                }
             }
         }
         cli::Command::EmitObj { input, out } => {
@@ -224,7 +249,6 @@ fn main() -> Result<()> {
             runtime::interpret(&program);
         }
         cli::Command::Link { inputs, out } => {
-            // Step 1: Compile all .f90 files to .obj files
             let mut artifacts = Vec::new();
             for inp in inputs {
                 if inp
@@ -234,10 +258,14 @@ fn main() -> Result<()> {
                     .unwrap_or(false)
                 {
                     let obj_out = utils::default_object_output_path(&inp);
-                    println!("Compiling: {}", inp.display());
+                    if !args.quiet {
+                        println!("Compiling: {}", inp.display());
+                    }
                     let art =
                         compile_to_object(&inp, &obj_out, args.wall, args.werror, &args, true)?;
-                    println!("  -> {}", obj_out.display());
+                    if !args.quiet {
+                        println!("  -> {}", obj_out.display());
+                    }
                     artifacts.push(art);
                 } else {
                     artifacts.push(BuildArtifact {
@@ -282,11 +310,11 @@ fn main() -> Result<()> {
                 }
             };
 
-            println!("Linking {} object files...", objects.len());
-            link_executable(&objects, &exe_out, args.lto)?;
             if !args.quiet {
-                println!("Linked: {}", exe_out.display());
+                println!("Linking {} object files...", objects.len());
             }
+            link_executable(&objects, &exe_out, &args)?;
+            println!("Linked: {}", exe_out.display());
         }
         cli::Command::Help => {
             utils::print_help();
@@ -548,6 +576,10 @@ fn compute_link_deps(arts: &mut [BuildArtifact]) {
     }
 }
 
-fn link_executable(objects: &[std::path::PathBuf], out: &std::path::Path, lto: bool) -> Result<()> {
-    linker::link(objects, out, lto)
+fn link_executable(
+    objects: &[std::path::PathBuf],
+    out: &std::path::Path,
+    args: &Cli,
+) -> Result<()> {
+    linker::link(objects, out, args)
 }

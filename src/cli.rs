@@ -27,6 +27,7 @@ pub struct Cli {
         help = "Enable Link Time Optimization (LTO) for better performance"
     )]
     pub lto: bool,
+
     #[structopt(
         short = "O",
         long = "opt-level",
@@ -56,11 +57,7 @@ pub struct Cli {
     #[structopt(long = "debug-ir", help = "Show IR before and after optimizations")]
     pub debug_ir: bool,
 
-    #[structopt(
-        short = "S",
-        long = "emit-asm",
-        help = "Print generated assembly for the object file"
-    )]
+    #[structopt(short = "S", long = "emit-asm", help = "Print generated assembly")]
     pub emit_asm: bool,
 
     #[structopt(long = "help", short = "h", help = "Show this help message")]
@@ -71,47 +68,91 @@ pub struct Cli {
 
     #[structopt(long = "version", short = "v", help = "Show version information")]
     pub version: bool,
+
+    #[structopt(
+        long = "run",
+        help = "Run after building (only applies if no subcommand)"
+    )]
+    pub run: bool,
 }
 
 #[derive(Debug, StructOpt, Clone)]
 pub enum Command {
     Lex {
         input: PathBuf,
+        out: Option<PathBuf>,
     },
-
     Parse {
         input: PathBuf,
+        out: Option<PathBuf>,
     },
-
     Check {
         input: PathBuf,
     },
-
     Build {
         input: PathBuf,
-
         #[structopt(short = "o", long)]
         out: Option<PathBuf>,
-
         #[structopt(long)]
         run: bool,
     },
-
     Link {
         inputs: Vec<PathBuf>,
-
         #[structopt(short = "o", long)]
         out: Option<PathBuf>,
     },
-
     EmitObj {
         input: PathBuf,
-
         out: PathBuf,
     },
-
     Run {
         input: PathBuf,
     },
     Help,
+}
+
+impl Cli {
+    pub fn normalize(mut self) -> Self {
+        if self.cmd.is_none() {
+            if self.inputs.len() > 1 {
+                self.cmd = Some(Command::Link {
+                    inputs: self.inputs.clone(),
+                    out: self.out.clone(),
+                });
+            } else if let Some(first) = self.inputs.get(0) {
+                self.cmd = Some(Command::Build {
+                    input: first.clone(),
+                    out: self.out.clone(),
+                    run: self.run,
+                });
+            }
+        }
+        if let Some(Command::Lex {
+            ref input,
+            out: ref output,
+        }) = self.cmd
+        {
+            if output.is_none() {
+                let out = self.out.clone();
+                self.cmd = Some(Command::Lex {
+                    input: input.to_path_buf(),
+                    out,
+                });
+            }
+        }
+        if let Some(Command::Parse {
+            ref input,
+            out: ref output,
+        }) = self.cmd
+        {
+            if output.is_none() {
+                let out = self.out.clone();
+                self.cmd = Some(Command::Parse {
+                    input: input.to_path_buf(),
+                    out,
+                });
+            }
+        }
+        self
+    }
 }

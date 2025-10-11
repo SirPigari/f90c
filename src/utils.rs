@@ -1,4 +1,3 @@
-// extract_obj_exports removed — no longer used by the simplified top-level flow.
 use anyhow::Result;
 use std::{
     fs,
@@ -54,6 +53,11 @@ pub fn print_help() {
     println!("  --opt-level <level>  Set optimization level (0, 1, 2, 3, s, z, S, Z)");
     println!("  --quiet              Suppress all output except errors");
     println!("  --help               Show this help message");
+    println!("  --debug-ir           Show IR before and after optimizations");
+    println!("  --run                Run the executable after building");
+    println!("  -q                   Suppress all output except errors");
+    println!("  -S, --emit-asm       Print generated assembly for the object file");
+    println!("  -o <output>          Specify output file (default derived from first source)");
 }
 
 pub fn default_exe_output_path(input: &Path) -> PathBuf {

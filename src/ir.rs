@@ -2115,7 +2115,9 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                         }
                     }
                 }
-                Stmt::ImplicitNone => {}
+                Stmt::Implicit(_) => {
+                    // Implicit statements are handled during semantic analysis
+                }
                 Stmt::Block { body } => {
                     let mut b = Vec::new();
                     let mut child_types = types.clone();

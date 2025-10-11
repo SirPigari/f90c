@@ -1,20 +1,13 @@
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Program {
     #[allow(dead_code)]
     pub name: String,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
-pub enum TypeSpec {
-    Integer(Option<u8>),
-    Real,
-    DoublePrecision,
-    Character(Option<usize>),
-    Logical,
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
     Print {
         items: Vec<Expr>,
@@ -80,7 +73,7 @@ pub enum Stmt {
         name: String,
         body: Vec<Stmt>,
     },
-    ImplicitNone,
+    Implicit(Implicit),
     SelectCase {
         expr: Expr,
         cases: Vec<CaseBlock>,
@@ -93,25 +86,58 @@ pub enum Stmt {
     Cycle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TypeSpec {
+    Integer(Option<u8>),
+    Real,
+    DoublePrecision,
+    Character(Option<usize>),
+    Logical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Implicit {
+    None,
+    Rule {
+        type_spec: TypeSpec,
+        letter_ranges: Vec<LetterRange>,
+    },
+    Rules {
+        rules: Vec<ImplicitRule>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplicitRule {
+    pub type_spec: TypeSpec,
+    pub letter_ranges: Vec<LetterRange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LetterRange {
+    pub start: char,
+    pub end: Option<char>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseBlock {
     pub items: Vec<CaseItem>,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CaseItem {
     Range(Expr, Expr),
     Single(Expr),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CaseOrDefault {
     Case(CaseBlock),
     Default(Vec<Stmt>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -131,13 +157,13 @@ pub enum BinOp {
     Concat,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnOp {
     Neg,
     Not,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     Str(String),
     IntLit(String),

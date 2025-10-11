@@ -287,7 +287,6 @@ impl Externs {
         self.sig_strcmp = Some(b.func.import_signature(sig_strcmp));
     }
 
-    // Helper methods to call functions using cached addresses when available
     fn call_printf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
         if let (Some(addr), Some(sig)) = (self.printf_addr, self.sig_printf) {
             b.ins().call_indirect(sig, addr, args)
@@ -704,14 +703,8 @@ fn print_expr(
     arrays: &HashMap<String, usize>,
     e: &IExpr,
 ) -> Result<()> {
-    // Note: cached_fn_slot is accessed by closure capture in callers.
-    // ...existing code...
     use ir::condcodes::FloatCC;
     use ir::{types, MemFlags};
-    // For compatibility with minimal edits, keep the existing signature but
-    // rely on the caller having prepared cached function slots in the
-    // surrounding scope and stored func_addr values in stack slots. We'll
-    // load them by name when needed.
     match e {
         IExpr::Str(s) => {
             let mut bytes = s.as_bytes().to_vec();
@@ -2821,7 +2814,6 @@ impl Backend for CraneliftBackend {
                     );
                 }
                 let mut arrays: HashMap<String, usize> = HashMap::new();
-                // (No per-function caching enabled yet; keep default direct calls.)
                 let _tr = gen_stmts(
                     &mut b,
                     &ex,

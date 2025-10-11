@@ -1,8 +1,7 @@
 // Seed grammar to evolve toward full Fortran 90. 
-// For now we cover: program unit + optional implicit none + simple
 grammar;
 
-use crate::ast::{Program, Stmt, Expr, TypeSpec, CaseBlock, CaseItem, CaseOrDefault};
+use crate::ast::{Program, Stmt, Expr, TypeSpec, CaseBlock, CaseItem, CaseOrDefault, Implicit, ImplicitRule, LetterRange};
 use crate::lexer::TokenKind;
 
 extern {
@@ -119,6 +118,7 @@ SubrDef: Stmt = {
 EndTail: () = {
     /* empty */ => (),
     KW_PROGRAM Ident => (),
+    KW_PROGRAM => (),
 };
 
 Ident: String = { <s:ID> => s };
@@ -170,10 +170,21 @@ Stmt: Stmt = {
         // produce an explicit ArrayDecl so downstream lowering can see dims
         Stmt::ArrayDecl { kind: t, name: id, dims }
     },
-    <id: Ident> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
     <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
+    <id: Ident> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
     KW_USE <m: Ident> => Stmt::Use { module: m },
-    KW_IMPLICIT KW_NONE => Stmt::ImplicitNone,
+    KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
+    KW_IMPLICIT <rules: ImplicitRuleList> => {
+        if rules.len() == 1 {
+            let rule = &rules[0];
+            Stmt::Implicit(Implicit::Rule { 
+                type_spec: rule.type_spec.clone(), 
+                letter_ranges: rule.letter_ranges.clone() 
+            })
+        } else {
+            Stmt::Implicit(Implicit::Rules { rules })
+        }
+    },
     KW_SELECT KW_CASE LPAREN <e: RhsExpr> RPAREN <case_blocks: CaseBlocks> KW_END KW_SELECT => {
         let mut default: Option<Vec<Stmt>> = None;
         let mut blocks: Vec<CaseBlock> = Vec::new();
@@ -212,6 +223,15 @@ TypeSpec: TypeSpec = {
         let len = n.parse::<usize>().unwrap_or(0);
         TypeSpec::Character(Some(len))
     },
+    KW_LOGICAL => TypeSpec::Logical,
+};
+
+// Separate type spec rule for implicit statements to avoid conflicts
+ImplicitTypeSpec: TypeSpec = {
+    KW_INTEGER => TypeSpec::Integer(None),
+    KW_REAL => TypeSpec::Real,
+    KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
+    KW_CHARACTER => TypeSpec::Character(None),
     KW_LOGICAL => TypeSpec::Logical,
 };
 
@@ -316,8 +336,7 @@ DimList: Vec<Expr> = {
 };
 
 CaseBlocks: Vec<CaseOrDefault> = {
-    /* empty */ => vec![],
-    <mut v: CaseBlocks> <cb: CaseBlockRule> => { v.push(cb); v },
+    CaseBlockRule* => <>,
 };
 
 CaseBlockRule: CaseOrDefault = {
@@ -337,3 +356,32 @@ CaseItem: CaseItem = {
 };
 
 PreFuncDecl: Stmt = { <t: TypeSpec> <_attrs: AttrList> DCOLON <names: IdentList> => Stmt::VarDecl { kind: t, names } };
+
+ImplicitRuleList: Vec<ImplicitRule> = {
+    <rule: ImplicitRuleItem> => vec![rule],
+    <mut v: ImplicitRuleList> COMMA <rule: ImplicitRuleItem> => { v.push(rule); v },
+};
+
+ImplicitRuleItem: ImplicitRule = {
+    <t: ImplicitTypeSpec> LPAREN <ranges: LetterRangeList> RPAREN => ImplicitRule {
+        type_spec: t,
+        letter_ranges: ranges,
+    },
+};
+
+LetterRangeList: Vec<LetterRange> = {
+    <lr: LetterRangeItem> => vec![lr],
+    <mut v: LetterRangeList> COMMA <lr: LetterRangeItem> => { v.push(lr); v },
+};
+
+LetterRangeItem: LetterRange = {
+    <start: Ident> => {
+        let start_char = start.chars().next().unwrap_or('a').to_ascii_lowercase();
+        LetterRange { start: start_char, end: None }
+    },
+    <start: Ident> MINUS <end: Ident> => {
+        let start_char = start.chars().next().unwrap_or('a').to_ascii_lowercase();
+        let end_char = end.chars().next().unwrap_or('z').to_ascii_lowercase();
+        LetterRange { start: start_char, end: Some(end_char) }
+    },
+};

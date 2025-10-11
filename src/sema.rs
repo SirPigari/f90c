@@ -1,9 +1,119 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use crate::ast::{CaseItem, Expr, Program, Stmt, TypeSpec};
+use crate::ast::{CaseItem, Expr, Implicit, LetterRange, Program, Stmt, TypeSpec};
 use crate::errors::{CompileError, CompileErrorKind};
 use crate::lexer::{Token, TokenKind};
+
+fn show_type(type_spec: &TypeSpec) -> String {
+    match type_spec {
+        TypeSpec::Integer(None) => "INTEGER(4)".to_string(),
+        TypeSpec::Integer(Some(kind)) => format!("INTEGER({})", kind),
+        TypeSpec::Real => "REAL(4)".to_string(),
+        TypeSpec::DoublePrecision => "REAL(8)".to_string(),
+        TypeSpec::Logical => "LOGICAL".to_string(),
+        TypeSpec::Character(None) => "CHARACTER".to_string(),
+        TypeSpec::Character(Some(len)) => format!("CHARACTER(len={})", len),
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImplicitTyping {
+    pub disabled: bool,
+    pub rules: Vec<ImplicitRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplicitRule {
+    pub type_spec: TypeSpec,
+    pub letter_ranges: Vec<LetterRange>,
+    pub span: std::ops::Range<usize>,
+}
+
+impl ImplicitTyping {
+    pub fn new() -> Self {
+        Self {
+            disabled: false,
+            rules: Vec::new(),
+        }
+    }
+    pub fn apply_implicit_none(&mut self) {
+        self.disabled = true;
+    }
+
+    pub fn add_rule(
+        &mut self,
+        type_spec: TypeSpec,
+        letter_ranges: Vec<LetterRange>,
+        span: std::ops::Range<usize>,
+    ) {
+        self.rules.push(ImplicitRule {
+            type_spec,
+            letter_ranges,
+            span,
+        });
+    }
+
+    pub fn get_implicit_type(&self, var_name: &str) -> Option<TypeSpec> {
+        if self.disabled {
+            return None;
+        }
+
+        let first_char = var_name.chars().next()?.to_ascii_lowercase();
+
+        for rule in &self.rules {
+            for range in &rule.letter_ranges {
+                let matches = if let Some(end_char) = range.end {
+                    first_char >= range.start && first_char <= end_char
+                } else {
+                    first_char == range.start
+                };
+
+                if matches {
+                    return Some(rule.type_spec.clone());
+                }
+            }
+        }
+
+        if matches!(first_char, 'i' | 'j' | 'k' | 'l' | 'm' | 'n') {
+            Some(TypeSpec::Integer(None))
+        } else {
+            Some(TypeSpec::Real)
+        }
+    }
+
+    pub fn get_implicit_type_with_span(
+        &self,
+        var_name: &str,
+    ) -> Option<(TypeSpec, Option<std::ops::Range<usize>>)> {
+        if self.disabled {
+            return None;
+        }
+
+        let first_char = var_name.chars().next()?.to_ascii_lowercase();
+
+        for rule in &self.rules {
+            for range in &rule.letter_ranges {
+                let matches = if let Some(end_char) = range.end {
+                    first_char >= range.start && first_char <= end_char
+                } else {
+                    first_char == range.start
+                };
+
+                if matches {
+                    return Some((rule.type_spec.clone(), Some(rule.span.clone())));
+                }
+            }
+        }
+
+        let default_type = if matches!(first_char, 'i' | 'j' | 'k' | 'l' | 'm' | 'n') {
+            TypeSpec::Integer(None)
+        } else {
+            TypeSpec::Real
+        };
+        Some((default_type, None))
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct SemaSettings {
@@ -81,14 +191,62 @@ fn report_error(
     use codespan_reporting::diagnostic::{Diagnostic, Label};
     use codespan_reporting::term::{emit, Config};
 
-    if !(silent_undefined && message.contains("undefined")) {
+    let is_undefined = message.ends_with("@UNDEFINED");
+    let clean_message = if is_undefined {
+        &message[..message.len() - "@UNDEFINED".len()]
+    } else {
+        message
+    };
+
+    if !(silent_undefined && is_undefined) {
         let diag = Diagnostic::error()
-            .with_message(message)
+            .with_message(clean_message)
             .with_labels(vec![Label::primary((), span.clone())]);
         let _ = emit(stderr, &Config::default(), file, &diag);
     }
 
-    errors.push(CompileError::new(CompileErrorKind::Semantic, message, span));
+    errors.push(CompileError::new(
+        CompileErrorKind::Semantic,
+        clean_message,
+        span,
+    ));
+}
+
+fn report_error_with_note(
+    message: &str,
+    primary_span: std::ops::Range<usize>,
+    note_message: &str,
+    note_span: std::ops::Range<usize>,
+    stderr: &mut codespan_reporting::term::termcolor::StandardStream,
+    file: &codespan_reporting::files::SimpleFile<&str, &str>,
+    errors: &mut Vec<CompileError>,
+    silent_undefined: bool,
+) {
+    use codespan_reporting::diagnostic::{Diagnostic, Label};
+    use codespan_reporting::term::{emit, Config};
+
+    let is_undefined = message.ends_with("@UNDEFINED");
+    let clean_message = if is_undefined {
+        &message[..message.len() - "@UNDEFINED".len()]
+    } else {
+        message
+    };
+
+    if !(silent_undefined && is_undefined) {
+        let diag = Diagnostic::error()
+            .with_message(clean_message)
+            .with_labels(vec![
+                Label::primary((), primary_span.clone()),
+                Label::secondary((), note_span.clone()).with_message(note_message),
+            ]);
+        let _ = emit(stderr, &Config::default(), file, &diag);
+    }
+
+    errors.push(CompileError::new(
+        CompileErrorKind::Semantic,
+        clean_message,
+        primary_span,
+    ));
 }
 
 pub fn analyze_with_src(
@@ -102,6 +260,7 @@ pub fn analyze_with_src(
 ) -> Vec<CompileError> {
     let mut sym: HashMap<String, TypeSpec> = HashMap::new();
     let mut errors: Vec<CompileError> = Vec::new();
+    let mut implicit_typing = ImplicitTyping::new();
 
     fn find_assign_rhs_span(
         tokens: &[Token],
@@ -137,6 +296,22 @@ pub fn analyze_with_src(
                             }
                             _ => {}
                         }
+                    }
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn find_assign_lhs_span(tokens: &[Token], name: &str) -> Option<std::ops::Range<usize>> {
+        let lname = name.to_ascii_lowercase();
+        let mut i = 0usize;
+        while i + 1 < tokens.len() {
+            if let TokenKind::Ident(id) = &tokens[i].kind {
+                if id.eq_ignore_ascii_case(&lname) {
+                    if matches!(tokens[i + 1].kind, TokenKind::Eq) {
+                        return Some(tokens[i].span.clone());
                     }
                 }
             }
@@ -184,6 +359,62 @@ pub fn analyze_with_src(
             Stmt::Do { var, .. } => {
                 sym.insert(var.to_ascii_lowercase(), TypeSpec::Integer(None));
             }
+            Stmt::Implicit(imp) => match imp {
+                Implicit::None => {
+                    implicit_typing.apply_implicit_none();
+                }
+                Implicit::Rule {
+                    type_spec,
+                    letter_ranges,
+                } => {
+                    let implicit_span = tokens
+                        .iter()
+                        .position(|t| matches!(t.kind, TokenKind::KwImplicit))
+                        .map(|i| {
+                            let start = tokens[i].span.start;
+                            let end = tokens
+                                .iter()
+                                .skip(i)
+                                .find(|t| matches!(t.kind, TokenKind::RParen))
+                                .map(|t| t.span.end)
+                                .unwrap_or(tokens[i].span.end);
+                            start..end
+                        })
+                        .unwrap_or(0..0);
+
+                    implicit_typing.add_rule(
+                        type_spec.clone(),
+                        letter_ranges.clone(),
+                        implicit_span,
+                    );
+                }
+                Implicit::Rules { rules } => {
+                    let implicit_span = tokens
+                        .iter()
+                        .position(|t| matches!(t.kind, TokenKind::KwImplicit))
+                        .map(|i| {
+                            let start = tokens[i].span.start;
+
+                            let end = tokens
+                                .iter()
+                                .skip(i)
+                                .filter(|t| matches!(t.kind, TokenKind::RParen))
+                                .last()
+                                .map(|t| t.span.end)
+                                .unwrap_or(tokens[i].span.end);
+                            start..end
+                        })
+                        .unwrap_or(0..0);
+
+                    for rule in rules {
+                        implicit_typing.add_rule(
+                            rule.type_spec.clone(),
+                            rule.letter_ranges.clone(),
+                            implicit_span.clone(),
+                        );
+                    }
+                }
+            },
             _ => {}
         }
     }
@@ -239,6 +470,54 @@ pub fn analyze_with_src(
     }
     for stmt in &program.body {
         collect_do_vars(stmt, &mut sym);
+    }
+
+    fn collect_assignment_targets_early(
+        s: &Stmt,
+        sym: &mut HashMap<String, TypeSpec>,
+        implicit_typing: &ImplicitTyping,
+    ) {
+        match s {
+            Stmt::Assign { name, .. } => {
+                let lname = name.to_ascii_lowercase();
+                if !sym.contains_key(&lname) {
+                    if let Some(implicit_type) = implicit_typing.get_implicit_type(&lname) {
+                        sym.insert(lname, implicit_type);
+                    }
+                }
+            }
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                for st in then_body {
+                    collect_assignment_targets_early(st, sym, implicit_typing);
+                }
+                if let Some(eb) = else_body {
+                    for st in eb {
+                        collect_assignment_targets_early(st, sym, implicit_typing);
+                    }
+                }
+            }
+            Stmt::Do { body, .. } => {
+                for st in body {
+                    collect_assignment_targets_early(st, sym, implicit_typing);
+                }
+            }
+            Stmt::Function { body, .. }
+            | Stmt::Subroutine { body, .. }
+            | Stmt::Module { body, .. } => {
+                for st in body {
+                    collect_assignment_targets_early(st, sym, implicit_typing);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for stmt in &program.body {
+        collect_assignment_targets_early(stmt, &mut sym, &implicit_typing);
     }
 
     fn check_loop_usage(
@@ -628,18 +907,34 @@ pub fn analyze_with_src(
         use codespan_reporting::diagnostic::{Diagnostic, Label};
         use codespan_reporting::term::{emit, Config};
         if let Some(decl_span) = decl_span_opt {
-            let msg = format!("undefined variable `{}` (declared in an inner BLOCK)", name);
-            if !silent_undefined {
-                let diag = Diagnostic::error().with_message(&msg).with_labels(vec![
-                    Label::primary((), use_span.clone()),
-                    Label::secondary((), decl_span.clone()),
-                ]);
+            let msg = format!(
+                "undefined variable `{}` (declared in an inner BLOCK)@UNDEFINED",
+                name
+            );
+            let is_undefined = msg.ends_with("@UNDEFINED");
+            let clean_msg = if is_undefined {
+                &msg[..msg.len() - "@UNDEFINED".len()]
+            } else {
+                &msg
+            };
+
+            if !(silent_undefined && is_undefined) {
+                let diag = Diagnostic::error()
+                    .with_message(clean_msg)
+                    .with_labels(vec![
+                        Label::primary((), use_span.clone()),
+                        Label::secondary((), decl_span.clone()),
+                    ]);
                 let _ = emit(&mut stderr, &Config::default(), &file, &diag);
             }
-            errors.push(CompileError::new(CompileErrorKind::Semantic, msg, use_span));
+            errors.push(CompileError::new(
+                CompileErrorKind::Semantic,
+                clean_msg,
+                use_span,
+            ));
         } else {
             report_error(
-                &format!("undefined variable `{}`", name),
+                &format!("undefined variable `{}`@UNDEFINED", name),
                 use_span,
                 &mut stderr,
                 &file,
@@ -959,6 +1254,9 @@ pub fn analyze_with_src(
             (DoublePrecision, DoublePrecision) => true,
             (Logical, Logical) => true,
             (Character(_), Character(_)) => true,
+
+            (Integer(_), Real) => false,
+            (Integer(_), DoublePrecision) => false,
             _ => false,
         }
     }
@@ -1937,14 +2235,76 @@ pub fn analyze_with_src(
             }
         }
     }
+
+    for stmt in &program.body {
+        if let Stmt::Assign { name, value } = stmt {
+            let lname = name.to_ascii_lowercase();
+            if let Some(var_type) = sym.get(&lname) {
+                if let Some(value_type) = infer_expr_type(value, &sym, &fn_map, &external_fn_ret) {
+                    if !match_types(var_type, &value_type) {
+                        let assignment_span = find_assign_lhs_span(tokens, name)
+                            .unwrap_or_else(|| find_ident_span(name));
+                        let msg = format!("type mismatch in assignment to `{}`", name);
+
+                        if let Some((_, Some(implicit_span))) =
+                            implicit_typing.get_implicit_type_with_span(&lname)
+                        {
+                            let note_msg =
+                                format!("implicitly defined as {} here", show_type(var_type));
+                            report_error_with_note(
+                                &msg,
+                                assignment_span,
+                                &note_msg,
+                                implicit_span,
+                                &mut stderr,
+                                &file,
+                                &mut errors,
+                                false,
+                            );
+                        } else {
+                            let type_span = type_span_map
+                                .get(&lname)
+                                .cloned()
+                                .unwrap_or_else(|| find_ident_span(name));
+                            let note_msg = format!("declared as {} here", show_type(var_type));
+                            report_error_with_note(
+                                &msg,
+                                assignment_span,
+                                &note_msg,
+                                type_span,
+                                &mut stderr,
+                                &file,
+                                &mut errors,
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
     fn walk_expr_undef<'a>(
         e: &'a Expr,
         fn_map: &HashMap<String, FnInfo>,
         external_fn_ret: &HashMap<String, TypeSpec>,
-        sym: &HashMap<String, TypeSpec>,
+        sym: &mut HashMap<String, TypeSpec>,
+        implicit_typing: &ImplicitTyping,
         undef: &mut Vec<&'a str>,
     ) {
         match e {
+            Expr::Ident(name) => {
+                let lname = name.to_ascii_lowercase();
+                if !sym.contains_key(&lname)
+                    && !fn_map.contains_key(&lname)
+                    && !external_fn_ret.contains_key(&lname)
+                {
+                    if let Some(implicit_type) = implicit_typing.get_implicit_type(name) {
+                        sym.insert(lname, implicit_type);
+                    } else {
+                        undef.push(name);
+                    }
+                }
+            }
             Expr::Call(name, args) => {
                 let lname = name.to_ascii_lowercase();
                 if !sym.contains_key(&lname)
@@ -1954,14 +2314,32 @@ pub fn analyze_with_src(
                     undef.push(name);
                 }
                 for a in args {
-                    walk_expr_undef(a, fn_map, external_fn_ret, sym, undef);
+                    walk_expr_undef(a, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 }
             }
             Expr::Bin(_, l, r) => {
-                walk_expr_undef(l, fn_map, external_fn_ret, sym, undef);
-                walk_expr_undef(r, fn_map, external_fn_ret, sym, undef);
+                walk_expr_undef(l, fn_map, external_fn_ret, sym, implicit_typing, undef);
+                walk_expr_undef(r, fn_map, external_fn_ret, sym, implicit_typing, undef);
             }
-            Expr::Un(_, inner) => walk_expr_undef(inner, fn_map, external_fn_ret, sym, undef),
+            Expr::Un(_, inner) => {
+                walk_expr_undef(inner, fn_map, external_fn_ret, sym, implicit_typing, undef)
+            }
+            Expr::Index(name, indices) => {
+                let lname = name.to_ascii_lowercase();
+                if !sym.contains_key(&lname)
+                    && !fn_map.contains_key(&lname)
+                    && !external_fn_ret.contains_key(&lname)
+                {
+                    if let Some(implicit_type) = implicit_typing.get_implicit_type(name) {
+                        sym.insert(lname, implicit_type);
+                    } else {
+                        undef.push(name);
+                    }
+                }
+                for idx in indices {
+                    walk_expr_undef(idx, fn_map, external_fn_ret, sym, implicit_typing, undef);
+                }
+            }
             _ => {}
         }
     }
@@ -1969,36 +2347,44 @@ pub fn analyze_with_src(
         s: &'a Stmt,
         fn_map: &HashMap<String, FnInfo>,
         external_fn_ret: &HashMap<String, TypeSpec>,
-        sym: &HashMap<String, TypeSpec>,
+        sym: &mut HashMap<String, TypeSpec>,
+        implicit_typing: &ImplicitTyping,
         undef: &mut Vec<&'a str>,
     ) {
         match s {
-            Stmt::Assign { value, .. } => {
-                walk_expr_undef(value, fn_map, external_fn_ret, sym, undef)
+            Stmt::VarDecl { kind, names } => {
+                for name in names {
+                    sym.insert(name.to_ascii_lowercase(), kind.clone());
+                }
             }
-            Stmt::Return(Some(e)) => walk_expr_undef(e, fn_map, external_fn_ret, sym, undef),
+            Stmt::Assign { value, .. } => {
+                walk_expr_undef(value, fn_map, external_fn_ret, sym, implicit_typing, undef)
+            }
+            Stmt::Return(Some(e)) => {
+                walk_expr_undef(e, fn_map, external_fn_ret, sym, implicit_typing, undef)
+            }
             Stmt::If {
                 cond,
                 then_body,
                 else_body,
             } => {
-                walk_expr_undef(cond, fn_map, external_fn_ret, sym, undef);
+                walk_expr_undef(cond, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 for st in then_body {
-                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
+                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 }
                 if let Some(eb) = else_body {
                     for st in eb {
-                        walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
+                        walk_stmt_undef(st, fn_map, external_fn_ret, sym, implicit_typing, undef);
                     }
                 }
             }
             Stmt::Do {
                 start, end, body, ..
             } => {
-                walk_expr_undef(start, fn_map, external_fn_ret, sym, undef);
-                walk_expr_undef(end, fn_map, external_fn_ret, sym, undef);
+                walk_expr_undef(start, fn_map, external_fn_ret, sym, implicit_typing, undef);
+                walk_expr_undef(end, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 for st in body {
-                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
+                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 }
             }
             Stmt::CallSub { name, args } => {
@@ -2010,14 +2396,50 @@ pub fn analyze_with_src(
                     undef.push(name);
                 }
                 for a in args {
-                    walk_expr_undef(a, fn_map, external_fn_ret, sym, undef);
+                    walk_expr_undef(a, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 }
             }
-            Stmt::Function { body, .. }
-            | Stmt::Subroutine { body, .. }
-            | Stmt::Module { body, .. } => {
+            Stmt::Function { params, body, .. } => {
+                let mut local_sym = sym.clone();
+                for param in params {
+                    let param_lower = param.to_ascii_lowercase();
+                    if let Some(implicit_type) = implicit_typing.get_implicit_type(param) {
+                        local_sym.insert(param_lower, implicit_type);
+                    }
+                }
                 for st in body {
-                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, undef);
+                    walk_stmt_undef(
+                        st,
+                        fn_map,
+                        external_fn_ret,
+                        &mut local_sym,
+                        implicit_typing,
+                        undef,
+                    );
+                }
+            }
+            Stmt::Subroutine { params, body, .. } => {
+                let mut local_sym = sym.clone();
+                for param in params {
+                    let param_lower = param.to_ascii_lowercase();
+                    if let Some(implicit_type) = implicit_typing.get_implicit_type(param) {
+                        local_sym.insert(param_lower, implicit_type);
+                    }
+                }
+                for st in body {
+                    walk_stmt_undef(
+                        st,
+                        fn_map,
+                        external_fn_ret,
+                        &mut local_sym,
+                        implicit_typing,
+                        undef,
+                    );
+                }
+            }
+            Stmt::Module { body, .. } => {
+                for st in body {
+                    walk_stmt_undef(st, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 }
             }
             _ => {}
@@ -2025,7 +2447,14 @@ pub fn analyze_with_src(
     }
     let mut undef_calls: Vec<&str> = Vec::new();
     for stmt in &program.body {
-        walk_stmt_undef(stmt, &fn_map, &external_fn_ret, &sym, &mut undef_calls);
+        walk_stmt_undef(
+            stmt,
+            &fn_map,
+            &external_fn_ret,
+            &mut sym,
+            &implicit_typing,
+            &mut undef_calls,
+        );
     }
     use std::collections::HashSet as _HashSet;
     let mut seen_undef = _HashSet::new();
@@ -2037,7 +2466,7 @@ pub fn analyze_with_src(
         if seen_undef.insert(lname.clone()) {
             let span = find_ident_span(name);
             report_error(
-                &format!("undefined function or subroutine `{}`", name),
+                &format!("undefined function or subroutine `{}`@UNDEFINED", name),
                 span,
                 &mut stderr,
                 &file,

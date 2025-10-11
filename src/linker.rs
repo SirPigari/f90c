@@ -1,6 +1,7 @@
+use crate::cli::Cli;
 use anyhow::Context;
+use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,7 +10,6 @@ const LINKER_BYTES: &[u8] = include_bytes!("bin/lld-link.exe");
 #[cfg(not(target_os = "windows"))]
 const LINKER_BYTES: &[u8] = include_bytes!("bin/ld.lld");
 
-// Windows libs
 #[cfg(all(windows, target_pointer_width = "64"))]
 const MSVCRT_LIB: &[u8] = include_bytes!("libs/x64/msvcrt.lib");
 #[cfg(all(windows, target_pointer_width = "64"))]
@@ -24,7 +24,6 @@ const KERNEL32_LIB: &[u8] = include_bytes!("libs/x86/kernel32.lib");
 #[cfg(all(windows, target_pointer_width = "32"))]
 const LEGACY_STDIO_LIB: &[u8] = include_bytes!("libs/x86/legacy_stdio_definitions.lib");
 
-// Unix libs
 #[cfg(all(not(windows), target_pointer_width = "64"))]
 const LIBCXX_LIB: &[u8] = include_bytes!("libs/x64/libc++.so");
 #[cfg(all(not(windows), target_pointer_width = "64"))]
@@ -59,31 +58,97 @@ fn find_crt_files() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
     }
 }
 
-pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
-    let temp_root = std::env::temp_dir();
-    let uid = uuid::Uuid::new_v4();
-
-    // Write linker to temp
+pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
     let linker_path = {
-        let mut path = temp_root.clone();
-        let filename = if cfg!(windows) {
-            format!("lld-link-{}.exe", uid)
+        use std::process::Command;
+
+        let cache_base = env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+        let cache_dir = cache_base.join(".f90c-link");
+        if !cache_dir.exists() {
+            fs::create_dir_all(&cache_dir)?;
+            let _ = Command::new("attrib")
+                .args(&["+h", cache_dir.to_str().unwrap()])
+                .status();
+        }
+
+        let arch = if cfg!(target_pointer_width = "64") {
+            "x64"
         } else {
-            format!("lld-{}", uid)
+            "x86"
         };
-        path.push(filename);
-        path
+        let arch_dir = cache_dir.join(arch);
+        if !arch_dir.exists() {
+            fs::create_dir_all(&arch_dir)?;
+        }
+
+        let linker_path = arch_dir.join("lld-link.exe");
+        if !linker_path.exists() {
+            println!("[link] writing linker to {}", linker_path.display());
+            fs::write(&linker_path, LINKER_BYTES)?;
+        }
+
+        let libs = [
+            ("msvcrt.lib", MSVCRT_LIB),
+            ("kernel32.lib", KERNEL32_LIB),
+            ("legacy_stdio_definitions.lib", LEGACY_STDIO_LIB),
+        ];
+        for (name, bytes) in libs {
+            let path = arch_dir.join(name);
+            if !path.exists() {
+                fs::write(&path, bytes)?;
+            }
+        }
+
+        linker_path
     };
-    {
-        let mut f = fs::File::create(&linker_path)
-            .with_context(|| format!("failed to create linker at {:?}", linker_path))?;
-        f.write_all(LINKER_BYTES)?;
-    }
-    #[cfg(unix)]
-    {
+
+    #[cfg(not(target_os = "windows"))]
+    let linker_path = {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&linker_path, fs::Permissions::from_mode(0o755))?;
-    }
+
+        let home_dir = env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/usr/local"));
+        let cache_dir = home_dir.join(".f90c-link");
+        if !cache_dir.exists() {
+            fs::create_dir_all(&cache_dir)?;
+        }
+
+        let arch = if cfg!(target_pointer_width = "64") {
+            "x64"
+        } else {
+            "x86"
+        };
+        let arch_dir = cache_dir.join(arch);
+        if !arch_dir.exists() {
+            fs::create_dir_all(&arch_dir)?;
+        }
+
+        let linker_path = arch_dir.join("ld.lld");
+        if !linker_path.exists() {
+            let mut f = fs::File::create(&linker_path)?;
+            println!("[link] writing linker to {}", linker_path.display());
+            f.write_all(LINKER_BYTES)?;
+            fs::set_permissions(&linker_path, fs::Permissions::from_mode(0o755))?;
+        }
+
+        let libs = [
+            ("libc++.so", LIBCXX_LIB),
+            ("libLLVM-20.so", LLVM_LIB),
+            ("patch.o", PATCH_LIB),
+        ];
+        for (name, bytes) in libs {
+            let path = arch_dir.join(name);
+            if !path.exists() {
+                fs::write(&path, bytes)?;
+            }
+        }
+
+        linker_path
+    };
 
     let mut args: Vec<String> = Vec::new();
 
@@ -91,21 +156,20 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
     {
         args.push(format!("/OUT:{}", out.display()));
         for obj in objects {
-            println!("[link] adding {}", obj.display());
+            if !cli.quiet {
+                println!("[link] adding {}", obj.display());
+            }
             args.push(obj.display().to_string());
         }
-        if lto {
-            println!("[link] enabling LTO");
+        if cli.lto {
+            if !cli.quiet {
+                println!("[link] enabling LTO");
+            }
             args.push("/LTCG".into());
         }
         args.push("/SUBSYSTEM:CONSOLE".into());
 
-        let lib_dir = temp_root.join(format!("lucia_libs_{}", uid));
-        fs::create_dir_all(&lib_dir)?;
-        fs::write(lib_dir.join("msvcrt.lib"), MSVCRT_LIB)?;
-        fs::write(lib_dir.join("legacy_stdio_definitions.lib"), LEGACY_STDIO_LIB)?;
-        fs::write(lib_dir.join("kernel32.lib"), KERNEL32_LIB)?;
-
+        let lib_dir = linker_path.parent().unwrap();
         args.push(format!("/LIBPATH:{}", lib_dir.display()));
         args.push("msvcrt.lib".into());
         args.push("legacy_stdio_definitions.lib".into());
@@ -117,15 +181,25 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         args.push("--gc-sections".into());
         args.push("--strip-all".into());
         args.push("--sort-section=alignment".into());
-        //args.push("--no-warnings".into());
-        if lto {
-            println!("[link] enabling LTO");
+
+        if cli.lto {
+            if !cli.quiet {
+                println!("[link] enabling LTO");
+            }
             args.push("-flto".into());
         }
 
         args.push("-no-pie".into());
+
         let (crt1, crti, crtn) = find_crt_files()?;
-        println!("[link] using crt files: {}, {}, {}", crt1.display(), crti.display(), crtn.display());
+        if !cli.quiet {
+            println!(
+                "[link] using crt files: {}, {}, {}",
+                crt1.display(),
+                crti.display(),
+                crtn.display()
+            );
+        }
 
         args.push("-o".into());
         args.push(out.display().to_string());
@@ -134,22 +208,17 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         args.push(crti.display().to_string());
 
         for obj in objects {
-            println!("[link] adding {}", obj.display());
+            if !cli.quiet {
+                println!("[link] adding {}", obj.display());
+            }
             args.push(obj.display().to_string());
         }
 
         args.push(crtn.display().to_string());
 
-        let lib_dir = temp_root.join(format!("lucia_libs_{}", uid));
-        fs::create_dir_all(&lib_dir)?;
-        fs::write(lib_dir.join("libc++.so"), LIBCXX_LIB)?;
-        fs::write(lib_dir.join("libLLVM-20.so"), LLVM_LIB)?;
-        
-        let patch_path = lib_dir.join("patch.o");
-        fs::write(&patch_path, PATCH_LIB)?;
+        let lib_dir = linker_path.parent().unwrap();
 
-        args.push(patch_path.display().to_string());
-
+        args.push(lib_dir.join("patch.o").display().to_string());
         args.push("--dynamic-linker".into());
         args.push("/lib64/ld-linux-x86-64.so.2".into());
 
@@ -160,22 +229,23 @@ pub fn link(objects: &[PathBuf], out: &Path, lto: bool) -> anyhow::Result<()> {
         args.push("-lm".into());
     }
 
-    println!("[link] invoking linker {}", env!("LINKER_VERSION"));
+    if !cli.quiet {
+        println!("[link] invoking linker {}", env!("LINKER_VERSION"));
+    }
     let status = Command::new(&linker_path)
         .args(&args)
         .status()
         .with_context(|| format!("failed to execute linker at {:?}", linker_path))?;
 
     if !status.success() {
-        anyhow::bail!("linker exited with status {:?}", status.code().unwrap_or(-1));
+        anyhow::bail!(
+            "linker exited with status {:?}",
+            status.code().unwrap_or(-1)
+        );
     }
 
-    println!("[link] successfully linked {}", out.display());
-
-    let _ = fs::remove_file(&linker_path);
-    #[cfg(target_os = "windows")]
-    {
-        let _ = fs::remove_dir_all(temp_root.join(format!("lucia_libs_{}", uid)));
+    if !cli.quiet {
+        println!("[link] successfully linked {}", out.display());
     }
 
     Ok(())

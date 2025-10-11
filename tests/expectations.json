@@ -139,6 +139,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "2 4 6 8 10\r\na1: 2\r\na5: 10\r\nsum: 30\r\n"
+    },
+    "21_implicit": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "4298\r\n3.141\r\n"
     }
   }
 }

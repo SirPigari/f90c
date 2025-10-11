@@ -18,12 +18,10 @@ impl Expectation {
     fn normalize(&self) -> Self {
         let mut norm = self.clone();
 
-        // Normalize line endings to \n
         norm.compiler_stderr = norm.compiler_stderr.replace("\r\n", "\n");
         norm.program_stdout = norm.program_stdout.replace("\r\n", "\n");
         norm.program_stderr = norm.program_stderr.replace("\r\n", "\n");
 
-        // Trim trailing whitespace lines
         while norm.compiler_stderr.ends_with('\n') {
             norm.compiler_stderr.pop();
         }
@@ -70,7 +68,6 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
     let mut echo_input = String::new();
     let mut link_files = Vec::new();
 
-    // parse top lines starting with ! echo: or ! link-with:
     for line in content.lines() {
         let line = line.trim();
         if let Some(text) = line.strip_prefix("! echo: ") {
@@ -79,11 +76,10 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
         } else if let Some(link_file) = line.strip_prefix("! link-with:") {
             link_files.push(src.parent().unwrap().join(link_file.trim()));
         } else if !line.starts_with('!') {
-            break; // stop at first non-directive line
+            break;
         }
     }
 
-    // compile linked files first
     for link_path in &link_files {
         let link_out = Command::new(f90c)
             .arg(&link_path)
@@ -97,7 +93,6 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
         }
     }
 
-    // compile main file
     let mut comp_cmd = Command::new(f90c);
     if !link_files.is_empty() {
         for link_path in &link_files {
@@ -112,12 +107,7 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
         .push_str(&String::from_utf8_lossy(&comp_out.stderr));
     exp.compiler_exit_code = comp_out.status.code().unwrap_or(-1);
 
-    if !comp_out.status.success() {
-        return exp;
-    }
-
-    // run executable if it exists
-    if exe_path.exists() {
+    if exe_path.exists() && comp_out.status.success() {
         let mut run = Command::new(&exe_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -218,7 +208,6 @@ fn process_case(
         let exp = all.cases.get(stem).unwrap().normalize();
         let got = got.normalize();
 
-        // If compilation failed, always show the error output
         if got.compiler_exit_code != 0 {
             if exp.compiler_exit_code != got.compiler_exit_code {
                 println!("---- {} ----", stem);
@@ -230,8 +219,8 @@ fn process_case(
                     println!("compiler stderr:\n{}", got.compiler_stderr);
                 }
                 failures.push(stem.to_string());
+                return;
             }
-            return;
         }
 
         if exp != got {

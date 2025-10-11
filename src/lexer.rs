@@ -37,6 +37,35 @@ pub enum TokenKind {
         }
         out
     })]
+    #[regex(r"'([^'\\]|\\.)*'", |lex| {
+        let s = lex.slice();
+        let inner = &s[1..s.len()-1];
+
+        let mut out = String::new();
+        let mut chars = inner.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    match next {
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        '\\' => out.push('\\'),
+                        '\'' => out.push('\''),
+                        'r' => out.push('\r'),
+                        other => {
+                            out.push('\\');
+                            out.push(other);
+                        }
+                    }
+                } else {
+                    out.push('\\');
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    })]
     Str(String),
     #[regex(r"([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().to_string())]
     Float(String),
