@@ -22,6 +22,10 @@ impl Expectation {
         norm.program_stdout = norm.program_stdout.replace("\r\n", "\n");
         norm.program_stderr = norm.program_stderr.replace("\r\n", "\n");
 
+        norm.compiler_stderr = norm.compiler_stderr.replace('\\', "/");
+        norm.program_stdout = norm.program_stdout.replace('\\', "/");
+        norm.program_stderr = norm.program_stderr.replace('\\', "/");
+
         while norm.compiler_stderr.ends_with('\n') {
             norm.compiler_stderr.pop();
         }

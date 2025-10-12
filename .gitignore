@@ -3,6 +3,7 @@
 !src/bin/lld-link.exe
 !src/bin/objdump.exe
 *.obj
+tests/tmp_test
 Cargo.lock
 src/fortran.rs
 ./test.f90

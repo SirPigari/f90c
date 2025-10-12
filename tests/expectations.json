@@ -5,32 +5,32 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "comments test passed\r\n"
+      "program_stdout": "comments test passed\n"
     },
     "02_basic_returns": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "i: 42\r\nr: 3.5\r\n"
+      "program_stdout": "i: 42\nr: 3.5\n"
     },
     "03_external_decl_and_call": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "x: 5\r\n"
+      "program_stdout": "x: 5\n"
     },
     "04_integer_kinds": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "1242900000000012345678901234567890\r\n"
+      "program_stdout": "1242900000000012345678901234567890\n"
     },
     "05_type_mismatch_in_function_result": {
       "compiler_exit_code": 1,
-      "compiler_stderr": "\u001b[0m\u001b[1m\u001b[38;5;9merror\u001b[0m\u001b[1m: type mismatch in assignment to `bad`\u001b[0m\n  \u001b[0m\u001b[36m┌─\u001b[0m tests\\05_type_mismatch_in_function_result.f90:1:1\n  \u001b[0m\u001b[36m│\u001b[0m\n\u001b[0m\u001b[36m1\u001b[0m \u001b[0m\u001b[36m│\u001b[0m \u001b[0m\u001b[31minteger\u001b[0m :: bad\n  \u001b[0m\u001b[36m│\u001b[0m \u001b[0m\u001b[31m^^^^^^^\u001b[0m\n\n\u001b[0m\u001b[1m\u001b[38;5;11mwarning\u001b[0m\u001b[1m: function or subroutine `bad` is never called\u001b[0m\n  \u001b[0m\u001b[36m┌─\u001b[0m tests\\05_type_mismatch_in_function_result.f90:1:12\n  \u001b[0m\u001b[36m│\u001b[0m\n\u001b[0m\u001b[36m1\u001b[0m \u001b[0m\u001b[36m│\u001b[0m integer :: \u001b[0m\u001b[33mbad\u001b[0m\n  \u001b[0m\u001b[36m│\u001b[0m            \u001b[0m\u001b[33m^^^\u001b[0m\n\nSemantic: type mismatch in assignment to `bad`\nWarning: function or subroutine `bad` is never called\nError: compile failed\n",
+      "compiler_stderr": "\u001b[0m\u001b[1m\u001b[38;5;9merror\u001b[0m\u001b[1m: type mismatch in assignment to `bad`\u001b[0m\n  \u001b[0m\u001b[34m┌─\u001b[0m tests/05_type_mismatch_in_function_result.f90:1:1\n  \u001b[0m\u001b[34m│\u001b[0m\n\u001b[0m\u001b[34m1\u001b[0m \u001b[0m\u001b[34m│\u001b[0m \u001b[0m\u001b[31minteger\u001b[0m :: bad\n  \u001b[0m\u001b[34m│\u001b[0m \u001b[0m\u001b[31m^^^^^^^\u001b[0m\n\n\u001b[0m\u001b[1m\u001b[38;5;11mwarning\u001b[0m\u001b[1m: function or subroutine `bad` is never called\u001b[0m\n  \u001b[0m\u001b[34m┌─\u001b[0m tests/05_type_mismatch_in_function_result.f90:1:12\n  \u001b[0m\u001b[34m│\u001b[0m\n\u001b[0m\u001b[34m1\u001b[0m \u001b[0m\u001b[34m│\u001b[0m integer :: \u001b[0m\u001b[33mbad\u001b[0m\n  \u001b[0m\u001b[34m│\u001b[0m            \u001b[0m\u001b[33m^^^\u001b[0m\n\nSemantic: type mismatch in assignment to `bad`\nWarning: function or subroutine `bad` is never called\nError: compile failed\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": ""
@@ -40,112 +40,112 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "b_true: .TRUE.\r\nb_false: .FALSE.\r\n"
+      "program_stdout": "b_true: .TRUE.\nb_false: .FALSE.\n"
     },
     "07_character": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "s: hello world\r\nhello world\r\n"
+      "program_stdout": "s: hello world\nhello world\n"
     },
     "08_real_double": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "real: 3.14159\r\ndouble precision: 3.14159265358979\r\n"
+      "program_stdout": "real: 3.14159\ndouble precision: 3.14159265358979\n"
     },
     "09_if_else": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "if-then works\r\nelse branch\r\n"
+      "program_stdout": "if-then works\nelse branch\n"
     },
     "10_do_loop": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "loop i: 1\r\nloop i: 2\r\nloop i: 3\r\n"
+      "program_stdout": "loop i: 1\nloop i: 2\nloop i: 3\n"
     },
     "11_operators": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "ops add: 5\r\nops sub: 6\r\nops mul: 42\r\nops div: 4\r\nops pow: 256.0\r\nops eq: .TRUE.\r\nops ne: .TRUE.\r\nops lt: .TRUE.\r\nops gt: .FALSE.\r\nops le: .TRUE.\r\nops ge: .TRUE.\r\nops and: .FALSE.\r\nops or: .TRUE.\r\nops not: .TRUE.\r\nops eqv: .TRUE.\r\nops neqv: .TRUE.\r\nops concat: hello world\r\n"
+      "program_stdout": "ops add: 5\nops sub: 6\nops mul: 42\nops div: 4\nops pow: 256.0\nops eq: .TRUE.\nops ne: .TRUE.\nops lt: .TRUE.\nops gt: .FALSE.\nops le: .TRUE.\nops ge: .TRUE.\nops and: .FALSE.\nops or: .TRUE.\nops not: .TRUE.\nops eqv: .TRUE.\nops neqv: .TRUE.\nops concat: hello world\n"
     },
     "12_functions": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "in foo\r\nbar x: 5\r\ni4: 1\r\nj4: 5\r\n"
+      "program_stdout": "in foo\nbar x: 5\ni4: 1\nj4: 5\n"
     },
     "13_subroutine_and_args": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "add(10,32): 42\r\nmix(2,5,3): 13\r\nshow3 args: 123\r\nreal_add: 4.0\r\ndp_add: 4.0\r\n"
+      "program_stdout": "add(10,32): 42\nmix(2,5,3): 13\nshow3 args: 123\nreal_add: 4.0\ndp_add: 4.0\n"
     },
     "14_use": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "Result is 8\r\n"
+      "program_stdout": "Result is 8\n"
     },
     "15_read": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "Absolute value of t: 6969\r\nYou entered: HELLO and WORLD\r\n"
+      "program_stdout": "Absolute value of t: 6969\nYou entered: HELLO and WORLD\n"
     },
     "16_select": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "You selected option 2\r\nYou selected option 3\r\nYou selected option 1\r\nInvalid option\r\n"
+      "program_stdout": "You selected option 2\nYou selected option 3\nYou selected option 1\nInvalid option\n"
     },
     "17_blocks": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "Inside block: 1\r\nInside block: 2\r\nInside block: 3\r\nInside block: 4\r\nInside block: 5\r\nInside block: 6\r\nInside block: 7\r\nInside block: 8\r\nInside block: 9\r\nInside block: 10\r\nExited block\r\ni: 11\r\n"
+      "program_stdout": "Inside block: 1\nInside block: 2\nInside block: 3\nInside block: 4\nInside block: 5\nInside block: 6\nInside block: 7\nInside block: 8\nInside block: 9\nInside block: 10\nExited block\ni: 11\n"
     },
     "18_cycle_exit_and_stop": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "i = 1 j = 1\r\ni = 1 j = 3\r\ni = 2 j = 1\r\ni = 2 j = 3\r\ni = 3 j = 1\r\ni = 3 j = 3\r\n"
+      "program_stdout": "i = 1 j = 1\ni = 1 j = 3\ni = 2 j = 1\ni = 2 j = 3\ni = 3 j = 1\ni = 3 j = 3\n"
     },
     "19_do_while": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "1\r\n2\r\n3\r\n5\r\n8\r\n13\r\n21\r\n34\r\n55\r\n89\r\n144\r\n"
+      "program_stdout": "1\n2\n3\n5\n8\n13\n21\n34\n55\n89\n144\n"
     },
     "20_arrays": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "2 4 6 8 10\r\na1: 2\r\na5: 10\r\nsum: 30\r\n"
+      "program_stdout": "2 4 6 8 10\na1: 2\na5: 10\nsum: 30\n"
     },
     "21_implicit": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "4298\r\n3.141\r\n"
+      "program_stdout": "4298\n3.141\n"
     }
   }
 }

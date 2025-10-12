@@ -26,7 +26,7 @@ fn main() {
         bundle_files_lib.extend(["kernel32.lib", "legacy_stdio_definitions.lib", "msvcrt.lib"]);
     } else {
         bundle_files_bin.extend(["ld.lld"]);
-        bundle_files_lib.extend(["libc++.so", "libLLVM-20.so", "patch.o"]);
+        bundle_files_lib.extend(["libc++.so", "patch.o"]);
     }
 
     for file_name in bundle_files_bin {

@@ -27,14 +27,10 @@ const LEGACY_STDIO_LIB: &[u8] = include_bytes!("libs/x86/legacy_stdio_definition
 #[cfg(all(not(windows), target_pointer_width = "64"))]
 const LIBCXX_LIB: &[u8] = include_bytes!("libs/x64/libc++.so");
 #[cfg(all(not(windows), target_pointer_width = "64"))]
-const LLVM_LIB: &[u8] = include_bytes!("libs/x64/libLLVM-20.so");
-#[cfg(all(not(windows), target_pointer_width = "64"))]
 const PATCH_LIB: &[u8] = include_bytes!("libs/x64/patch.o");
 
 #[cfg(all(not(windows), target_pointer_width = "32"))]
 const LIBCXX_LIB: &[u8] = include_bytes!("libs/x86/libc++.so");
-#[cfg(all(not(windows), target_pointer_width = "32"))]
-const LLVM_LIB: &[u8] = include_bytes!("libs/x86/libLLVM-20.so");
 #[cfg(all(not(windows), target_pointer_width = "32"))]
 const PATCH_LIB: &[u8] = include_bytes!("libs/x86/patch.o");
 
@@ -131,13 +127,13 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> anyhow::Result<()> {
         if !linker_path.exists() {
             let mut f = fs::File::create(&linker_path)?;
             println!("[link] writing linker to {}", linker_path.display());
+            use std::io::Write;
             f.write_all(LINKER_BYTES)?;
             fs::set_permissions(&linker_path, fs::Permissions::from_mode(0o755))?;
         }
 
         let libs = [
             ("libc++.so", LIBCXX_LIB),
-            ("libLLVM-20.so", LLVM_LIB),
             ("patch.o", PATCH_LIB),
         ];
         for (name, bytes) in libs {
@@ -224,7 +220,6 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> anyhow::Result<()> {
 
         args.push(format!("-L{}", lib_dir.display()));
         args.push("-lc++".into());
-        args.push("-lLLVM-20".into());
         args.push("-lc".into());
         args.push("-lm".into());
     }
