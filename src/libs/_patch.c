@@ -1,3 +1,6 @@
+// This file is only for unix
+// We plan to make a single cross-platform library later
+
 #include <stdio.h>
 #include <stdlib.h>
 

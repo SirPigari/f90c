@@ -17,7 +17,7 @@ mod sema;
 mod utils;
 
 #[cfg(target_os = "windows")]
-const OBJDUMP_BYTES: Option<&[u8]> = Some(include_bytes!("bin/objdump.exe"));
+const OBJDUMP_BYTES: Option<&[u8]> = Some(include_bytes!("bin/tools/objdump.exe"));
 #[cfg(not(target_os = "windows"))]
 const OBJDUMP_BYTES: Option<&[u8]> = None;
 
@@ -452,7 +452,7 @@ fn compile_to_object(
             use codespan_reporting::diagnostic::{Diagnostic, Label};
             use codespan_reporting::files::SimpleFile;
             use codespan_reporting::term::termcolor::StandardStream;
-            use codespan_reporting::term::{emit, Config};
+            use codespan_reporting::term::{emit_to_io_write, Config};
 
             let mut stderr =
                 StandardStream::stderr(codespan_reporting::term::termcolor::ColorChoice::Auto);
@@ -481,7 +481,7 @@ fn compile_to_object(
                 Diagnostic::error().with_message(msg).with_labels(labels)
             };
 
-            let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+            let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
             return Err(anyhow::anyhow!("compile failed"));
         }
     };

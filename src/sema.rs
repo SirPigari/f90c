@@ -157,7 +157,7 @@ fn warn_or_error(
     errors: &mut Vec<CompileError>,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::term::{emit, Config};
+    use codespan_reporting::term::{emit_to_io_write, Config};
     let kn = kind_name.to_ascii_lowercase();
 
     if settings.allow.contains(&kn) {
@@ -170,13 +170,13 @@ fn warn_or_error(
         let diag = Diagnostic::error()
             .with_message(&message)
             .with_labels(vec![Label::primary((), span.clone())]);
-        let _ = emit(stderr, &Config::default(), file, &diag);
+        let _ = emit_to_io_write(stderr, &Config::default(), file, &diag);
         errors.push(CompileError::new(CompileErrorKind::Semantic, message, span));
     } else {
         let diag = Diagnostic::warning()
             .with_message(&message)
             .with_labels(vec![Label::primary((), span.clone())]);
-        let _ = emit(stderr, &Config::default(), file, &diag);
+        let _ = emit_to_io_write(stderr, &Config::default(), file, &diag);
         errors.push(CompileError::new(CompileErrorKind::Warning, message, span));
     }
 }
@@ -189,7 +189,7 @@ fn report_error(
     silent_undefined: bool,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::term::{emit, Config};
+    use codespan_reporting::term::{emit_to_io_write, Config};
 
     let is_undefined = message.ends_with("@UNDEFINED");
     let clean_message = if is_undefined {
@@ -202,7 +202,7 @@ fn report_error(
         let diag = Diagnostic::error()
             .with_message(clean_message)
             .with_labels(vec![Label::primary((), span.clone())]);
-        let _ = emit(stderr, &Config::default(), file, &diag);
+        let _ = emit_to_io_write(stderr, &Config::default(), file, &diag);
     }
 
     errors.push(CompileError::new(
@@ -223,7 +223,7 @@ fn report_error_with_note(
     silent_undefined: bool,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::term::{emit, Config};
+    use codespan_reporting::term::{emit_to_io_write, Config};
 
     let is_undefined = message.ends_with("@UNDEFINED");
     let clean_message = if is_undefined {
@@ -239,7 +239,7 @@ fn report_error_with_note(
                 Label::primary((), primary_span.clone()),
                 Label::secondary((), note_span.clone()).with_message(note_message),
             ]);
-        let _ = emit(stderr, &Config::default(), file, &diag);
+        let _ = emit_to_io_write(stderr, &Config::default(), file, &diag);
     }
 
     errors.push(CompileError::new(
@@ -905,7 +905,7 @@ pub fn analyze_with_src(
         };
 
         use codespan_reporting::diagnostic::{Diagnostic, Label};
-        use codespan_reporting::term::{emit, Config};
+        use codespan_reporting::term::{emit_to_io_write, Config};
         if let Some(decl_span) = decl_span_opt {
             let msg = format!(
                 "undefined variable `{}` (declared in an inner BLOCK)@UNDEFINED",
@@ -925,7 +925,7 @@ pub fn analyze_with_src(
                         Label::primary((), use_span.clone()),
                         Label::secondary((), decl_span.clone()),
                     ]);
-                let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+                let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
             }
             errors.push(CompileError::new(
                 CompileErrorKind::Semantic,

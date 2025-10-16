@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
-const LINKER_BYTES: &[u8] = include_bytes!("bin/lld-link.exe");
+const LINKER_BYTES: &[u8] = include_bytes!("bin/tools/lld-link.exe");
 #[cfg(not(target_os = "windows"))]
-const LINKER_BYTES: &[u8] = include_bytes!("bin/ld.lld");
+const LINKER_BYTES: &[u8] = include_bytes!("bin/tools/ld.lld");
 
 #[cfg(all(windows, target_pointer_width = "64"))]
 const MSVCRT_LIB: &[u8] = include_bytes!("libs/x64/msvcrt.lib");

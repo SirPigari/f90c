@@ -57,6 +57,14 @@ pub struct Cli {
     #[structopt(long = "debug-ir", help = "Show IR before and after optimizations")]
     pub debug_ir: bool,
 
+    #[structopt(
+        long = "target",
+        help = "Target triple for code generation (default: host target)"
+    )]
+    #[allow(dead_code)]
+    // not used now
+    pub target: Option<String>,
+
     #[structopt(short = "S", long = "emit-asm", help = "Print generated assembly")]
     pub emit_asm: bool,
 

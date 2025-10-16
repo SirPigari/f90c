@@ -1,7 +1,9 @@
 /target
 *.exe
-!src/bin/lld-link.exe
-!src/bin/objdump.exe
+!src/bin/tools/lld-link.exe
+!src/bin/tools/objdump.exe
+!src/bin/tools/ld.lld
+!src/bin/releases/*
 *.obj
 tests/tmp_test
 Cargo.lock

@@ -118,7 +118,7 @@ pub fn parse_with_src(
     use codespan_reporting::diagnostic::{Diagnostic, Label};
     use codespan_reporting::files::SimpleFile;
     use codespan_reporting::term::{
-        emit,
+        emit_to_io_write,
         termcolor::{ColorChoice, StandardStream},
         Config,
     };
@@ -135,7 +135,7 @@ pub fn parse_with_src(
             let diag = Diagnostic::error()
                 .with_message(&msg)
                 .with_labels(vec![Label::primary((), span.clone())]);
-            let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+            let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
             errs.push(CompileError::new(CompileErrorKind::Lex, msg, span));
         }
     }
@@ -186,7 +186,7 @@ pub fn parse_with_src(
             let diag = Diagnostic::error()
                 .with_message(&msg)
                 .with_labels(vec![Label::primary((), span.clone())]);
-            let _ = emit(&mut stderr, &Config::default(), &file, &diag);
+            let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
             errs.push(CompileError::new(CompileErrorKind::Parse, msg, span));
             Ok(crate::ast::Program {
                 name: "<error>".into(),

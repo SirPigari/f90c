@@ -26,6 +26,33 @@ impl Expectation {
         norm.program_stdout = norm.program_stdout.replace('\\', "/");
         norm.program_stderr = norm.program_stderr.replace('\\', "/");
 
+        fn strip_ansi(s: &str) -> String {
+            let mut result = String::with_capacity(s.len());
+            let mut chars = s.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\x1B' {
+                    if chars.peek() == Some(&'[') {
+                        chars.next();
+                        while let Some(&next) = chars.peek() {
+                            if ('@'..='~').contains(&next) {
+                                chars.next();
+                                break;
+                            } else {
+                                chars.next();
+                            }
+                        }
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            result
+        }
+
+        norm.compiler_stderr = strip_ansi(&norm.compiler_stderr);
+        norm.program_stdout = strip_ansi(&norm.program_stdout);
+        norm.program_stderr = strip_ansi(&norm.program_stderr);
+
         while norm.compiler_stderr.ends_with('\n') {
             norm.compiler_stderr.pop();
         }

@@ -7,7 +7,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
 
-    let bin_dir = manifest_dir.join("src").join("bin");
+    let bin_dir = manifest_dir.join("src").join("bin").join("tools");
     let lib_dir =
         manifest_dir
             .join("src")
